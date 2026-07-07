@@ -42,6 +42,33 @@ component ActionButton inherits Rectangle {
     }
 }
 
+component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 30px;
+    horizontal-stretch: 0;
+    background: danger ? #fff1f2 : #ffffff;
+    border-color: danger ? #fecdd3 : #cfd8e6;
+    border-width: 1px;
+    border-radius: 7px;
+
+    Text {
+        text: root.text;
+        color: root.danger ? #be123c : #243047;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
 component InfoPill inherits Rectangle {
     in property <string> text;
     in property <color> bg: #edf4ff;
@@ -85,7 +112,9 @@ component FieldLine inherits HorizontalLayout {
 
 component ProxyCard inherits Rectangle {
     in property <ProxyRow> item;
-    height: 166px;
+    callback edit(int);
+    callback remove(int);
+    height: 202px;
     background: #ffffff;
     border-color: #dbe3ee;
     border-width: 1px;
@@ -149,6 +178,22 @@ component ProxyCard inherits Rectangle {
                 value: "0.0.0.0:" + root.item.remote_port;
             }
         }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; }
+            SmallButton {
+                text: "编辑";
+                width: 64px;
+                clicked => { root.edit(root.item.index); }
+            }
+            SmallButton {
+                text: "删除";
+                danger: true;
+                width: 64px;
+                clicked => { root.remove(root.item.index); }
+            }
+        }
     }
 }
 
@@ -166,7 +211,15 @@ export component ProxyPage inherits Rectangle {
     in-out property <string> add_proxy_local_ip;
     in-out property <int> add_proxy_local_port;
     in-out property <int> add_proxy_remote_port;
+    in-out property <bool> show_edit_proxy;
+    in-out property <int> edit_proxy_index;
+    in-out property <string> edit_proxy_name;
+    in-out property <string> edit_proxy_local_ip;
+    in-out property <int> edit_proxy_local_port;
+    in-out property <int> edit_proxy_remote_port;
     callback add_proxy(string, string, int, int);
+    callback edit_proxy(int, string, string, int, int);
+    callback delete_proxy(int);
 
     background: transparent;
 
@@ -235,10 +288,34 @@ export component ProxyPage inherits Rectangle {
                 }
 
                 for pair in root.proxy_pairs : HorizontalLayout {
-                    height: 166px;
+                    height: 202px;
                     spacing: 14px;
-                    ProxyCard { width: 342px; item: pair.left; }
-                    if pair.has_right : ProxyCard { width: 342px; item: pair.right; }
+                    ProxyCard {
+                        width: 342px;
+                        item: pair.left;
+                        edit(index) => {
+                            root.edit_proxy_index = index;
+                            root.edit_proxy_name = pair.left.name;
+                            root.edit_proxy_local_ip = pair.left.local_ip;
+                            root.edit_proxy_local_port = pair.left.local_port;
+                            root.edit_proxy_remote_port = pair.left.remote_port;
+                            root.show_edit_proxy = true;
+                        }
+                        remove(index) => { root.delete_proxy(index); }
+                    }
+                    if pair.has_right : ProxyCard {
+                        width: 342px;
+                        item: pair.right;
+                        edit(index) => {
+                            root.edit_proxy_index = index;
+                            root.edit_proxy_name = pair.right.name;
+                            root.edit_proxy_local_ip = pair.right.local_ip;
+                            root.edit_proxy_local_port = pair.right.local_port;
+                            root.edit_proxy_remote_port = pair.right.remote_port;
+                            root.show_edit_proxy = true;
+                        }
+                        remove(index) => { root.delete_proxy(index); }
+                    }
                     if !pair.has_right : Rectangle { width: 342px; }
                 }
             }
@@ -313,6 +390,81 @@ export component ProxyPage inherits Rectangle {
                         clicked => {
                             root.add_proxy(root.add_proxy_name, root.add_proxy_local_ip, root.add_proxy_local_port, root.add_proxy_remote_port);
                             root.show_add_proxy = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show_edit_proxy: Rectangle {
+        background: #0f172a66;
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+
+        Rectangle {
+            width: 430px;
+            height: 392px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #ffffff;
+            border-color: #dbe3ee;
+            border-width: 1px;
+            border-radius: 10px;
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 13px;
+                alignment: start;
+
+                HorizontalLayout {
+                    Text { text: "编辑 TCP 代理"; font-size: 22px; font-weight: 800; color: #0f172a; }
+                    Rectangle { horizontal-stretch: 1; }
+                    InfoPill { text: "#" + root.edit_proxy_index; bg: #e0f2fe; fg: #0369a1; }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    FormLabel { text: "代理名称"; }
+                    LineEdit { text <=> root.edit_proxy_name; placeholder-text: "例如 tcp1"; height: 38px; width: 386px; }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    FormLabel { text: "本地 IP"; }
+                    LineEdit { text <=> root.edit_proxy_local_ip; placeholder-text: "127.0.0.1"; height: 38px; width: 386px; }
+                }
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    VerticalLayout {
+                        spacing: 6px;
+                        FormLabel { text: "本地端口"; }
+                        SpinBox { value <=> root.edit_proxy_local_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
+                    }
+                    VerticalLayout {
+                        spacing: 6px;
+                        FormLabel { text: "远端端口"; }
+                        SpinBox { value <=> root.edit_proxy_remote_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
+                    }
+                }
+
+                Rectangle { height: 4px; }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        text: "取消";
+                        width: 96px;
+                        clicked => { root.show_edit_proxy = false; }
+                    }
+                    ActionButton {
+                        text: "保存";
+                        primary: true;
+                        width: 104px;
+                        clicked => {
+                            root.edit_proxy(root.edit_proxy_index, root.edit_proxy_name, root.edit_proxy_local_ip, root.edit_proxy_local_port, root.edit_proxy_remote_port);
+                            root.show_edit_proxy = false;
                         }
                     }
                 }

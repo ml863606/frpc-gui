@@ -21,6 +21,7 @@ export component AppWindow inherits Window {
     in-out property <string> frps_port_text: "7000";
     in-out property <string> connection_test_status: "尚未测试";
     in-out property <bool> connection_testing: false;
+    in-out property <int> connection_test_state: 0;
     in-out property <int> auth_method_index: 0;
     in-out property <string> auth_token: "";
     in-out property <string> download_mirror: "https://gh.zwy.one";
@@ -185,6 +186,7 @@ export component AppWindow inherits Window {
                 frps_port_text <=> root.frps_port_text;
                 connection_test_status: root.connection_test_status;
                 connection_testing: root.connection_testing;
+                connection_test_state: root.connection_test_state;
                 auth_method_index <=> root.auth_method_index;
                 auth_token <=> root.auth_token;
                 save_frps => { root.save_frps(); }

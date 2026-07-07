@@ -3,20 +3,20 @@ component ActionButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> danger: false;
     callback clicked();
-    height: 40px;
-    min-width: 116px;
+    height: 62px;
+    min-width: 220px;
     horizontal-stretch: 0;
     background: danger ? #dc2626 : (primary ? #16a34a : #ffffff);
     border-color: danger ? #dc2626 : (primary ? #16a34a : #cfd8e6);
     border-width: 1px;
-    border-radius: 8px;
+    border-radius: 12px;
 
     Text {
         text: root.text;
         color: (root.primary || root.danger) ? #ffffff : #172033;
         horizontal-alignment: center;
         vertical-alignment: center;
-        font-size: 15px;
+        font-size: 20px;
         font-weight: 800;
     }
 
@@ -116,27 +116,20 @@ export component StatusPage inherits Rectangle {
 
             HorizontalLayout {
                 padding: 18px;
-                spacing: 14px;
-                Text {
-                    text: root.service_state == 1 ? "服务正在运行，可以停止 frpc 子进程。" : "服务未运行，启动前会保存当前 frps 与代理配置。";
-                    color: #475569;
-                    font-size: 15px;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                }
                 Rectangle { horizontal-stretch: 1; }
-                ActionButton {
-                    text: "启动服务";
-                    primary: root.service_state != 1;
-                    width: 116px;
-                    clicked => { root.start_service(); }
-                }
-                ActionButton {
+                if root.service_state == 1 : ActionButton {
                     text: "停止服务";
-                    danger: root.service_state == 1;
-                    width: 116px;
+                    danger: true;
+                    width: 240px;
                     clicked => { root.stop_service(); }
                 }
+                if root.service_state != 1 : ActionButton {
+                    text: root.service_state == 1 ? "停止服务" : (root.service_state == 2 ? "重新启动服务" : "启动服务");
+                    primary: true;
+                    width: 240px;
+                    clicked => { root.start_service(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
             }
         }
     }

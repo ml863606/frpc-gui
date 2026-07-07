@@ -173,6 +173,7 @@ export component FrpsPage inherits Rectangle {
     in-out property <string> frps_port_text;
     in property <string> connection_test_status;
     in property <bool> connection_testing;
+    in property <int> connection_test_state;
     in-out property <int> auth_method_index;
     in-out property <string> auth_token;
     callback save_frps();
@@ -274,18 +275,36 @@ export component FrpsPage inherits Rectangle {
                     Rectangle {
                         width: 306px;
                         height: 42px;
-                        background: root.connection_testing ? #eff6ff : #f8fafc;
-                        border-color: root.connection_testing ? #bfdbfe : #e2e8f0;
+                        background: root.connection_test_state == 2 ? #f0fdf4 : (root.connection_test_state == 3 ? #fef2f2 : (root.connection_testing ? #eff6ff : #f8fafc));
+                        border-color: root.connection_test_state == 2 ? #86efac : (root.connection_test_state == 3 ? #fecaca : (root.connection_testing ? #bfdbfe : #e2e8f0));
                         border-width: 1px;
                         border-radius: 8px;
 
-                        Text {
+                        if root.connection_test_state != 0 : Rectangle {
                             x: 12px;
+                            y: 10px;
+                            width: 22px;
+                            height: 22px;
+                            background: root.connection_test_state == 2 ? #22c55e : (root.connection_test_state == 3 ? #ef4444 : #3b82f6);
+                            border-radius: 11px;
+
+                            Text {
+                                text: root.connection_test_state == 2 ? "✓" : (root.connection_test_state == 3 ? "X" : "...");
+                                color: #ffffff;
+                                font-size: root.connection_test_state == 1 ? 10px : 14px;
+                                font-weight: 900;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            x: root.connection_test_state == 0 ? 12px : 42px;
                             y: 0px;
-                            width: parent.width - 24px;
+                            width: parent.width - (root.connection_test_state == 0 ? 24px : 54px);
                             height: parent.height;
                             text: root.connection_test_status;
-                            color: root.connection_testing ? #1d4ed8 : #475569;
+                            color: root.connection_test_state == 2 ? #166534 : (root.connection_test_state == 3 ? #991b1b : (root.connection_testing ? #1d4ed8 : #475569));
                             font-size: 13px;
                             font-weight: 700;
                             vertical-alignment: center;

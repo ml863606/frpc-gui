@@ -30,6 +30,8 @@ std::wstring g_downloadingVersion;
 int g_downloadProgress = 0;
 bool g_connectionTesting = false;
 std::wstring g_connectionTestStatus = L"尚未测试";
+int g_connectionTestState = 0;
+bool g_serviceFailed = false;
 std::mutex g_stateMutex;
 
 slint::SharedString S(const std::wstring& value) {
@@ -235,6 +237,12 @@ ProxyRow BuildProxyRow(const ProxyConfig& proxy, size_t index) {
     return row;
 }
 
+bool ValidateProxy(const ProxyConfig& proxy) {
+    return !proxy.name.empty() && !proxy.localIP.empty() &&
+           proxy.localPort > 0 && proxy.localPort <= 65535 &&
+           proxy.remotePort > 0 && proxy.remotePort <= 65535;
+}
+
 std::shared_ptr<slint::Model<ProxyPair>> BuildProxyPairs() {
     std::vector<ProxyPair> pairs;
     pairs.reserve((g_config.proxies.size() + 1) / 2);
@@ -317,6 +325,7 @@ void RefreshUi(const AppHandle& ui) {
     ui->set_frps_port_text(slint::SharedString(std::to_string(g_config.frpsPort)));
     ui->set_connection_testing(g_connectionTesting);
     ui->set_connection_test_status(S(g_connectionTestStatus));
+    ui->set_connection_test_state(g_connectionTestState);
     ui->set_auth_method_index(g_config.authMethod == L"token" ? 1 : 0);
     ui->set_auth_token(S(g_config.authToken));
     ui->set_download_mirror(S(g_config.downloadMirror.empty() ? L"https://gh.zwy.one" : g_config.downloadMirror));
@@ -327,7 +336,10 @@ void RefreshUi(const AppHandle& ui) {
     ui->set_downloading_version(S(g_downloadingVersion));
     ui->set_download_progress(g_downloadProgress);
     ui->set_log_text(slint::SharedString(BuildLogText()));
-    ui->set_status_text(slint::SharedString(g_frpc.IsRunning() ? "运行中" : "未运行"));
+    const bool running = g_frpc.IsRunning();
+    int serviceState = running ? 1 : (g_serviceFailed ? 2 : 0);
+    ui->set_service_state(serviceState);
+    ui->set_status_text(slint::SharedString(running ? "运行中" : (g_serviceFailed ? "启动失败" : "未启动")));
 }
 
 void AddLog(const std::wstring& text, const slint::ComponentWeakHandle<AppWindow>& weak) {
@@ -377,9 +389,6 @@ void ReadUiToConfig(const AppHandle& ui) {
     if (g_config.downloadMirror.empty()) {
         g_config.downloadMirror = L"https://gh.zwy.one";
     }
-    if (g_config.proxies.empty()) {
-        g_config.proxies.push_back(ProxyConfig{});
-    }
 }
 
 bool SaveCurrentConfig(const AppHandle& ui, bool requireComplete) {
@@ -416,9 +425,18 @@ bool LoadVersions() {
 }
 
 void StartFrpc(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        g_serviceFailed = false;
+    }
     if (!SaveCurrentConfig(ui, true)) return;
     if (!FileExists(CurrentFrpcPath())) {
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_serviceFailed = true;
+        }
         MessageBoxW(nullptr, L"当前版本未安装 frpc.exe，请到 frp版本管理 页面手动下载。", L"无法启动", MB_ICONWARNING);
+        RefreshUi(ui);
         return;
     }
 
@@ -428,13 +446,26 @@ void StartFrpc(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>&
                            [weak](const std::wstring& line) { AddLog(line, weak); },
                            [weak](DWORD) {
                                slint::invoke_from_event_loop([weak] {
-                                   if (auto ui = weak.lock()) RefreshUi(*ui);
+                                   if (auto ui = weak.lock()) {
+                                       {
+                                           std::lock_guard<std::mutex> lock(g_stateMutex);
+                                           g_serviceFailed = false;
+                                       }
+                                       RefreshUi(*ui);
+                                   }
                                });
                            },
                            &error);
     if (!ok) {
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_serviceFailed = true;
+        }
         MessageBoxW(nullptr, error.c_str(), L"启动失败", MB_ICONERROR);
         AddLog(L"启动失败: " + error, weak);
+    } else {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        g_serviceFailed = false;
     }
     RefreshUi(ui);
 }
@@ -546,16 +577,20 @@ void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<A
         {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             g_connectionTestStatus = L"请先填写公网 IP 或域名。";
+            g_connectionTestState = 3;
         }
         ui->set_connection_test_status(S(L"请先填写公网 IP 或域名。"));
+        ui->set_connection_test_state(3);
         return;
     }
     if (!TryParsePort(W(ui->get_frps_port_text()), port)) {
         {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             g_connectionTestStatus = L"端口无效，请输入 1-65535。";
+            g_connectionTestState = 3;
         }
         ui->set_connection_test_status(S(L"端口无效，请输入 1-65535。"));
+        ui->set_connection_test_state(3);
         return;
     }
 
@@ -567,10 +602,12 @@ void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<A
         }
         g_connectionTesting = true;
         g_connectionTestStatus = L"正在测试 " + host + L":" + std::to_wstring(port) + L" ...";
+        g_connectionTestState = 1;
         testingStatus = g_connectionTestStatus;
     }
     ui->set_connection_testing(true);
     ui->set_connection_test_status(S(testingStatus));
+    ui->set_connection_test_state(1);
 
     std::thread([weak, host, port]() {
         std::wstring error;
@@ -590,9 +627,11 @@ void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<A
                     std::lock_guard<std::mutex> lock(g_stateMutex);
                     g_connectionTesting = false;
                     g_connectionTestStatus = status;
+                    g_connectionTestState = ok ? 2 : 3;
                 }
                 (*ui)->set_connection_testing(false);
                 (*ui)->set_connection_test_status(S(status));
+                (*ui)->set_connection_test_state(ok ? 2 : 3);
             }
         });
     }).detach();
@@ -651,6 +690,10 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     ui->on_start_service([ui, weak] { StartFrpc(ui, weak); });
     ui->on_stop_service([ui] {
         g_frpc.Stop();
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_serviceFailed = false;
+        }
         RefreshUi(ui);
     });
     ui->on_save_frps([ui] {
@@ -682,13 +725,55 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         proxy.localIP = W(localIp);
         proxy.localPort = localPort;
         proxy.remotePort = remotePort;
-        if (proxy.name.empty() || proxy.localIP.empty() || proxy.localPort <= 0 || proxy.remotePort <= 0) {
+        if (!ValidateProxy(proxy)) {
             MessageBoxW(nullptr, L"请完整填写代理名称、本地 IP、本地端口、远端端口。", L"代理配置不完整", MB_ICONWARNING);
             return;
         }
         {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             g_config.proxies.push_back(proxy);
+            SaveConfig(g_config, nullptr);
+            WriteFrpcToml(g_config, nullptr);
+        }
+        RefreshUi(ui);
+    });
+    ui->on_edit_proxy([ui](int index, slint::SharedString name, slint::SharedString localIp,
+                           int localPort, int remotePort) {
+        ProxyConfig proxy;
+        proxy.name = W(name);
+        proxy.localIP = W(localIp);
+        proxy.localPort = localPort;
+        proxy.remotePort = remotePort;
+        if (!ValidateProxy(proxy)) {
+            MessageBoxW(nullptr, L"请完整填写代理名称、本地 IP、本地端口、远端端口。", L"代理配置不完整", MB_ICONWARNING);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            size_t pos = index > 0 ? static_cast<size_t>(index - 1) : g_config.proxies.size();
+            if (pos >= g_config.proxies.size()) {
+                MessageBoxW(nullptr, L"代理不存在，可能已经被删除。", L"编辑失败", MB_ICONWARNING);
+                return;
+            }
+            g_config.proxies[pos] = proxy;
+            SaveConfig(g_config, nullptr);
+            WriteFrpcToml(g_config, nullptr);
+        }
+        RefreshUi(ui);
+    });
+    ui->on_delete_proxy([ui](int index) {
+        if (MessageBoxW(nullptr, L"确定删除这个 TCP 代理吗？", L"删除代理",
+                        MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            size_t pos = index > 0 ? static_cast<size_t>(index - 1) : g_config.proxies.size();
+            if (pos >= g_config.proxies.size()) {
+                MessageBoxW(nullptr, L"代理不存在，可能已经被删除。", L"删除失败", MB_ICONWARNING);
+                return;
+            }
+            g_config.proxies.erase(g_config.proxies.begin() + static_cast<ptrdiff_t>(pos));
             SaveConfig(g_config, nullptr);
             WriteFrpcToml(g_config, nullptr);
         }
