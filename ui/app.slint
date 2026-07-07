@@ -33,6 +33,7 @@ export component AppWindow inherits Window {
     in-out property <int> download_progress: 0;
     in-out property <string> app_log_text: "";
     in-out property <string> frpc_log_text: "";
+    in-out property <int> current_log_tab: 0;
 
     in-out property <bool> show_add_proxy: false;
     in-out property <int> add_proxy_type_index: 0;
@@ -65,8 +66,7 @@ export component AppWindow inherits Window {
     callback add_proxy(int, string, string, string, string);
     callback edit_proxy(int, int, string, string, string, string);
     callback delete_proxy(int);
-    callback clear_app_log();
-    callback clear_frpc_log();
+    callback clear_current_log(int);
 
     Rectangle {
         width: parent.width;
@@ -206,10 +206,10 @@ export component AppWindow inherits Window {
             LogPage {
                 visible: root.current_page == 4;
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
+                current_tab <=> root.current_log_tab;
                 app_log_text: root.app_log_text;
                 frpc_log_text: root.frpc_log_text;
-                clear_app_log => { root.clear_app_log(); }
-                clear_frpc_log => { root.clear_frpc_log(); }
+                clear_current_log(tab) => { root.clear_current_log(tab); }
             }
         }
     }
