@@ -783,11 +783,18 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         g_frpcLogs.clear();
         ui->set_frpc_log_text("");
     });
-    ui->on_add_proxy([ui](slint::SharedString name, slint::SharedString localIp,
-                          int localPort, int remotePort) {
+    ui->on_add_proxy([ui](int typeIndex, slint::SharedString name, slint::SharedString localIp,
+                          slint::SharedString localPortText, slint::SharedString remotePortText) {
+        int localPort = 0;
+        int remotePort = 0;
         ProxyConfig proxy;
+        proxy.type = ProxyTypeFromIndex(typeIndex);
         proxy.name = W(name);
         proxy.localIP = W(localIp);
+        if (!TryParsePort(W(localPortText), localPort) || !TryParsePort(W(remotePortText), remotePort)) {
+            MessageBoxW(nullptr, L"端口无效，请输入 1-65535。", L"代理配置不完整", MB_ICONWARNING);
+            return;
+        }
         proxy.localPort = localPort;
         proxy.remotePort = remotePort;
         if (!ValidateProxy(proxy)) {
@@ -802,11 +809,18 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         }
         RefreshUi(ui);
     });
-    ui->on_edit_proxy([ui](int index, slint::SharedString name, slint::SharedString localIp,
-                           int localPort, int remotePort) {
+    ui->on_edit_proxy([ui](int index, int typeIndex, slint::SharedString name, slint::SharedString localIp,
+                           slint::SharedString localPortText, slint::SharedString remotePortText) {
+        int localPort = 0;
+        int remotePort = 0;
         ProxyConfig proxy;
+        proxy.type = ProxyTypeFromIndex(typeIndex);
         proxy.name = W(name);
         proxy.localIP = W(localIp);
+        if (!TryParsePort(W(localPortText), localPort) || !TryParsePort(W(remotePortText), remotePort)) {
+            MessageBoxW(nullptr, L"端口无效，请输入 1-65535。", L"代理配置不完整", MB_ICONWARNING);
+            return;
+        }
         proxy.localPort = localPort;
         proxy.remotePort = remotePort;
         if (!ValidateProxy(proxy)) {
