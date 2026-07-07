@@ -1,0 +1,22 @@
+export component NavButton inherits Rectangle {
+    in property <bool> active;
+    in property <string> text;
+    callback clicked();
+    height: 44px;
+    background: active ? #2563eb : #eef2f7;
+    border-radius: 8px;
+
+    Text {
+        text: root.text;
+        color: root.active ? #ffffff : #172033;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 16px;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}

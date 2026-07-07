@@ -73,7 +73,9 @@ bool RunHidden(const std::wstring& commandLine, const std::wstring& workDir, DWO
 }
 
 bool DownloadToFile(const std::wstring& url, const std::wstring& filePath,
-                    const FrpcManager::LogCallback& log, std::wstring* error) {
+                    const FrpcManager::LogCallback& log,
+                    const FrpcManager::ProgressCallback& progress,
+                    std::wstring* error) {
     URL_COMPONENTSW parts{};
     parts.dwStructSize = sizeof(parts);
 
@@ -142,6 +144,14 @@ bool DownloadToFile(const std::wstring& url, const std::wstring& filePath,
         return false;
     }
 
+    DWORD contentLength = 0;
+    DWORD contentLengthSize = sizeof(contentLength);
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &contentLength,
+                             &contentLengthSize, WINHTTP_NO_HEADER_INDEX)) {
+        contentLength = 0;
+    }
+
     HANDLE file = CreateFileW(filePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
@@ -153,8 +163,9 @@ bool DownloadToFile(const std::wstring& url, const std::wstring& filePath,
     }
 
     log(L"开始下载 frp 包...");
+    if (progress) progress(5);
     std::vector<char> buffer(64 * 1024);
-    DWORD total = 0;
+    unsigned long long total = 0;
     for (;;) {
         DWORD available = 0;
         if (!WinHttpQueryDataAvailable(request, &available)) {
@@ -192,6 +203,11 @@ bool DownloadToFile(const std::wstring& url, const std::wstring& filePath,
             return false;
         }
         total += read;
+        if (progress && contentLength > 0) {
+            int percent = 5 + static_cast<int>((total * 80) / contentLength);
+            if (percent > 85) percent = 85;
+            progress(percent);
+        }
         if (total % (1024 * 1024) < read) {
             std::wostringstream ss;
             ss << L"已下载 " << (total / 1024 / 1024) << L" MB";
@@ -346,6 +362,7 @@ bool FrpcManager::IsRunning() const {
 bool FrpcManager::DownloadFrpc(const FrpVersionInfo& version,
                                const std::wstring& mirrorBase,
                                LogCallback log,
+                               ProgressCallback progress,
                                std::wstring* error) {
     std::wstring dirError;
     if (!EnsureAppDirectories(&dirError)) {
@@ -354,11 +371,6 @@ bool FrpcManager::DownloadFrpc(const FrpVersionInfo& version,
     }
 
     std::wstring targetFrpc = GetFrpcPathForVersion(version.version);
-    if (FileExists(targetFrpc)) {
-        log(L"frpc.exe 已存在");
-        return true;
-    }
-
     std::wstring archive = JoinPath(GetDownloadsDir(), version.archiveName);
     std::wstring extractRoot = JoinPath(GetDownloadsDir(), L"extract-" + version.version);
     std::wstring extractedFrpc = JoinPath(JoinPath(extractRoot, version.extractDir), L"frpc.exe");
@@ -374,11 +386,12 @@ bool FrpcManager::DownloadFrpc(const FrpVersionInfo& version,
     std::wstring downloadUrl = BuildDownloadUrl(version, mirrorBase);
     log(L"准备下载 " + version.displayName);
     log(L"下载地址: " + downloadUrl);
-    if (!DownloadToFile(downloadUrl, archive, log, error)) {
+    if (!DownloadToFile(downloadUrl, archive, log, progress, error)) {
         return false;
     }
 
     log(L"下载完成，开始解压...");
+    if (progress) progress(88);
     std::wstring tarPath = L"C:\\Windows\\System32\\tar.exe";
     if (!FileExists(tarPath)) {
         tarPath = L"tar.exe";
@@ -398,10 +411,12 @@ bool FrpcManager::DownloadFrpc(const FrpVersionInfo& version,
     }
 
     try {
+        if (progress) progress(94);
         std::filesystem::create_directories(std::filesystem::path(targetFrpc).parent_path());
         std::filesystem::copy_file(extractedFrpc, targetFrpc,
                                    std::filesystem::copy_options::overwrite_existing);
         log(L"frpc.exe 已安装到: " + targetFrpc);
+        if (progress) progress(100);
         return true;
     } catch (const std::exception& ex) {
         if (error) *error = L"复制 frpc.exe 失败: " + Utf8ToWide(ex.what());

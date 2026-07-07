@@ -1,0 +1,202 @@
+import { NavButton } from "components/nav_button.slint";
+import { StatusPage } from "pages/status_page.slint";
+import { ProxyPage, ProxyPair } from "pages/proxy_page.slint";
+import { VersionPage, VersionPair } from "pages/version_page.slint";
+import { FrpsPage } from "pages/frps_page.slint";
+import { LogPage } from "pages/log_page.slint";
+
+export component AppWindow inherits Window {
+    title: "frp-desk";
+    width: 1040px;
+    height: 720px;
+    background: #f4f7fb;
+
+    in-out property <int> current_page: 0;
+    in-out property <string> status_text: "未运行";
+    in-out property <string> selected_version: "0.69.1";
+    in property <[string]> frpc_version_options;
+    in-out property <int> selected_version_index: 0;
+    in-out property <string> frps_public_ip: "";
+    in-out property <int> frps_port: 7000;
+    in-out property <string> frps_port_text: "7000";
+    in-out property <string> connection_test_status: "尚未测试";
+    in-out property <bool> connection_testing: false;
+    in-out property <int> auth_method_index: 0;
+    in-out property <string> auth_token: "";
+    in-out property <string> download_mirror: "https://gh.zwy.one";
+    in-out property <int> download_source_index: 0;
+    in property <[ProxyPair]> proxy_pairs;
+    in-out property <int> proxy_count: 0;
+    in property <[VersionPair]> version_pairs;
+    in-out property <string> downloading_version: "";
+    in-out property <int> download_progress: 0;
+    in-out property <string> log_text: "";
+
+    in-out property <bool> show_add_proxy: false;
+    in-out property <string> add_proxy_name: "";
+    in-out property <string> add_proxy_local_ip: "127.0.0.1";
+    in-out property <int> add_proxy_local_port: 8080;
+    in-out property <int> add_proxy_remote_port: 6000;
+    in-out property <bool> show_edit_proxy: false;
+    in-out property <int> edit_proxy_index: 0;
+    in-out property <string> edit_proxy_name: "";
+    in-out property <string> edit_proxy_local_ip: "127.0.0.1";
+    in-out property <int> edit_proxy_local_port: 8080;
+    in-out property <int> edit_proxy_remote_port: 6000;
+    in-out property <int> service_state: 0;
+
+    callback start_service();
+    callback stop_service();
+    callback save_frps();
+    callback test_frps_connection();
+    callback sync_versions();
+    callback download_current();
+    callback download_version(string);
+    callback copy_download_url(string);
+    callback open_version_folder(string);
+    callback add_proxy(string, string, int, int);
+    callback edit_proxy(int, string, string, int, int);
+    callback delete_proxy(int);
+    callback clear_log();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #f4f7fb;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 244px;
+            height: parent.height;
+            background: #ffffff;
+            border-color: #e2e8f0;
+            border-width: 1px;
+
+            Text {
+                x: 28px;
+                y: 30px;
+                text: "frp-desk";
+                font-size: 27px;
+                font-weight: 800;
+                color: #0f172a;
+            }
+
+            Text {
+                x: 28px;
+                y: 68px;
+                text: "轻量 frp 客户端";
+                color: #64748b;
+                font-size: 14px;
+            }
+
+            Rectangle {
+                x: 24px;
+                y: 108px;
+                width: 196px;
+                height: 1px;
+                background: #e2e8f0;
+            }
+
+            NavButton { x: 22px; y: 130px; width: 200px; text: "运行状态"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
+            NavButton { x: 22px; y: 184px; width: 200px; text: "代理设置"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
+            NavButton { x: 22px; y: 238px; width: 200px; text: "frp版本管理"; active: root.current_page == 2; clicked => { root.current_page = 2; } }
+            NavButton { x: 22px; y: 292px; width: 200px; text: "frps设置"; active: root.current_page == 3; clicked => { root.current_page = 3; } }
+            NavButton { x: 22px; y: 346px; width: 200px; text: "日志界面"; active: root.current_page == 4; clicked => { root.current_page = 4; } }
+
+            Text {
+                x: 28px;
+                y: parent.height - 48px;
+                text: "frpc 按版本独立维护";
+                color: #94a3b8;
+                font-size: 13px;
+            }
+        }
+
+        Rectangle {
+            x: 244px;
+            y: 0px;
+            width: parent.width - 244px;
+            height: parent.height;
+            background: #f4f7fb;
+
+            StatusPage {
+                visible: root.current_page == 0;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                status_text: root.status_text;
+                service_state: root.service_state;
+                selected_version: root.selected_version;
+                frps_public_ip: root.frps_public_ip;
+                frps_port: root.frps_port;
+                start_service => { root.start_service(); }
+                stop_service => { root.stop_service(); }
+            }
+
+            ProxyPage {
+                visible: root.current_page == 1;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                proxy_pairs: root.proxy_pairs;
+                proxy_count: root.proxy_count;
+                show_add_proxy <=> root.show_add_proxy;
+                add_proxy_name <=> root.add_proxy_name;
+                add_proxy_local_ip <=> root.add_proxy_local_ip;
+                add_proxy_local_port <=> root.add_proxy_local_port;
+                add_proxy_remote_port <=> root.add_proxy_remote_port;
+                show_edit_proxy <=> root.show_edit_proxy;
+                edit_proxy_index <=> root.edit_proxy_index;
+                edit_proxy_name <=> root.edit_proxy_name;
+                edit_proxy_local_ip <=> root.edit_proxy_local_ip;
+                edit_proxy_local_port <=> root.edit_proxy_local_port;
+                edit_proxy_remote_port <=> root.edit_proxy_remote_port;
+                add_proxy(name, local_ip, local_port, remote_port) => {
+                    root.add_proxy(name, local_ip, local_port, remote_port);
+                }
+                edit_proxy(index, name, local_ip, local_port, remote_port) => {
+                    root.edit_proxy(index, name, local_ip, local_port, remote_port);
+                }
+                delete_proxy(index) => {
+                    root.delete_proxy(index);
+                }
+            }
+
+            VersionPage {
+                visible: root.current_page == 2;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                download_mirror <=> root.download_mirror;
+                download_source_index <=> root.download_source_index;
+                selected_version <=> root.selected_version;
+                version_pairs: root.version_pairs;
+                downloading_version: root.downloading_version;
+                download_progress: root.download_progress;
+                sync_versions => { root.sync_versions(); }
+                download_version(version) => { root.download_version(version); }
+                copy_download_url(version) => { root.copy_download_url(version); }
+                open_version_folder(version) => { root.open_version_folder(version); }
+            }
+
+            FrpsPage {
+                visible: root.current_page == 3;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                selected_version <=> root.selected_version;
+                frpc_version_options: root.frpc_version_options;
+                selected_version_index <=> root.selected_version_index;
+                frps_public_ip <=> root.frps_public_ip;
+                frps_port <=> root.frps_port;
+                frps_port_text <=> root.frps_port_text;
+                connection_test_status: root.connection_test_status;
+                connection_testing: root.connection_testing;
+                auth_method_index <=> root.auth_method_index;
+                auth_token <=> root.auth_token;
+                save_frps => { root.save_frps(); }
+                test_frps_connection => { root.test_frps_connection(); }
+            }
+
+            LogPage {
+                visible: root.current_page == 4;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                log_text: root.log_text;
+                clear_log => { root.clear_log(); }
+            }
+        }
+    }
+}

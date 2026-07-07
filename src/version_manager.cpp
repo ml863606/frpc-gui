@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 
 namespace {
 
@@ -262,7 +263,8 @@ FrpVersionInfo DefaultFrpVersion() {
         L"frp 0.69.1",
         L"frp_0.69.1_windows_amd64.zip",
         L"https://github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_windows_amd64.zip",
-        L"frp_0.69.1_windows_amd64"
+        L"frp_0.69.1_windows_amd64",
+        L""
     };
 }
 
@@ -273,7 +275,31 @@ std::wstring GetVersionsDir() {
 }
 
 std::wstring GetVersionFilePath(const std::wstring& version) {
-    return JoinPath(GetVersionsDir(), version + L".json");
+    (void)version;
+    return GetVersionsSummaryPath();
+}
+
+std::wstring GetVersionsSummaryPath() {
+    return JoinPath(GetVersionsDir(), L"frp-versions.json");
+}
+
+static void RemoveLegacyVersionFiles() {
+    try {
+        if (!std::filesystem::exists(GetVersionsDir())) {
+            return;
+        }
+        const std::filesystem::path summary(GetVersionsSummaryPath());
+        for (const auto& entry : std::filesystem::directory_iterator(GetVersionsDir())) {
+            if (!entry.is_regular_file() || entry.path().extension() != L".json") {
+                continue;
+            }
+            if (entry.path().filename() == summary.filename()) {
+                continue;
+            }
+            std::filesystem::remove(entry.path());
+        }
+    } catch (...) {
+    }
 }
 
 bool EnsureDefaultVersionFiles(std::wstring* error) {
@@ -286,9 +312,10 @@ bool EnsureDefaultVersionFiles(std::wstring* error) {
         return false;
     }
 
-    FrpVersionInfo version = DefaultFrpVersion();
-    if (!FileExists(GetVersionFilePath(version.version))) {
-        return SaveFrpVersion(version, error);
+    RemoveLegacyVersionFiles();
+    if (!FileExists(GetVersionsSummaryPath())) {
+        std::vector<FrpVersionInfo> defaults{DefaultFrpVersion()};
+        return SaveFrpVersions(defaults, error);
     }
     return true;
 }
@@ -299,37 +326,31 @@ bool LoadFrpVersions(std::vector<FrpVersionInfo>& versions, std::wstring* error)
         return false;
     }
 
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator(GetVersionsDir())) {
-            if (!entry.is_regular_file() || entry.path().extension() != L".json") {
-                continue;
-            }
-            std::wstring json = Utf8ToWide(ReadAllBytes(entry.path().wstring()));
-            FrpVersionInfo info;
-            FindJsonString(json, L"version", info.version);
-            FindJsonString(json, L"displayName", info.displayName);
-            FindJsonString(json, L"archiveName", info.archiveName);
-            FindJsonString(json, L"downloadUrl", info.downloadUrl);
-            FindJsonString(json, L"extractDir", info.extractDir);
-            if (!info.version.empty() && !info.downloadUrl.empty()) {
-                if (info.displayName.empty()) info.displayName = L"frp " + info.version;
-                versions.push_back(info);
-            }
+    std::wstring json = Utf8ToWide(ReadAllBytes(GetVersionsSummaryPath()));
+    for (const auto& object : ExtractTopLevelObjects(json)) {
+        FrpVersionInfo info;
+        FindJsonString(object, L"version", info.version);
+        FindJsonString(object, L"displayName", info.displayName);
+        FindJsonString(object, L"archiveName", info.archiveName);
+        FindJsonString(object, L"downloadUrl", info.downloadUrl);
+        FindJsonString(object, L"extractDir", info.extractDir);
+        FindJsonString(object, L"publishedAt", info.publishedAt);
+        if (!info.version.empty() && !info.downloadUrl.empty()) {
+            if (info.displayName.empty()) info.displayName = L"frp " + info.version;
+            versions.push_back(info);
         }
-    } catch (const std::exception& ex) {
-        if (error) {
-            *error = L"读取版本目录失败: " + Utf8ToWide(ex.what());
-        }
-        return false;
     }
 
     if (versions.empty()) {
         versions.push_back(DefaultFrpVersion());
     }
+    std::sort(versions.begin(), versions.end(), [](const auto& a, const auto& b) {
+        return a.publishedAt > b.publishedAt;
+    });
     return true;
 }
 
-bool SaveFrpVersion(const FrpVersionInfo& version, std::wstring* error) {
+bool SaveFrpVersions(const std::vector<FrpVersionInfo>& versions, std::wstring* error) {
     try {
         std::filesystem::create_directories(GetVersionsDir());
     } catch (const std::exception& ex) {
@@ -339,15 +360,22 @@ bool SaveFrpVersion(const FrpVersionInfo& version, std::wstring* error) {
         return false;
     }
 
+    RemoveLegacyVersionFiles();
     std::wostringstream json;
-    json << L"{\n"
-         << L"  \"version\": \"" << EscapeJson(version.version) << L"\",\n"
-         << L"  \"displayName\": \"" << EscapeJson(version.displayName) << L"\",\n"
-         << L"  \"archiveName\": \"" << EscapeJson(version.archiveName) << L"\",\n"
-         << L"  \"downloadUrl\": \"" << EscapeJson(version.downloadUrl) << L"\",\n"
-         << L"  \"extractDir\": \"" << EscapeJson(version.extractDir) << L"\"\n"
-         << L"}\n";
-    return WriteAllBytes(GetVersionFilePath(version.version), WideToUtf8(json.str()), error);
+    json << L"[\n";
+    for (size_t i = 0; i < versions.size(); ++i) {
+        const auto& version = versions[i];
+        json << L"  {\n"
+             << L"    \"version\": \"" << EscapeJson(version.version) << L"\",\n"
+             << L"    \"displayName\": \"" << EscapeJson(version.displayName) << L"\",\n"
+             << L"    \"archiveName\": \"" << EscapeJson(version.archiveName) << L"\",\n"
+             << L"    \"downloadUrl\": \"" << EscapeJson(version.downloadUrl) << L"\",\n"
+             << L"    \"extractDir\": \"" << EscapeJson(version.extractDir) << L"\",\n"
+             << L"    \"publishedAt\": \"" << EscapeJson(version.publishedAt) << L"\"\n"
+             << L"  }" << (i + 1 == versions.size() ? L"\n" : L",\n");
+    }
+    json << L"]\n";
+    return WriteAllBytes(GetVersionsSummaryPath(), WideToUtf8(json.str()), error);
 }
 
 bool RefreshFrpVersionsFromGitHub(std::vector<FrpVersionInfo>& versions,
@@ -373,6 +401,8 @@ bool RefreshFrpVersionsFromGitHub(std::vector<FrpVersionInfo>& versions,
             if (tag.empty()) {
                 continue;
             }
+            std::wstring publishedAt;
+            FindJsonString(object, L"published_at", publishedAt);
             std::wstring archive = FindWindowsAmd64Archive(object);
             if (archive.empty()) {
                 continue;
@@ -392,6 +422,7 @@ bool RefreshFrpVersionsFromGitHub(std::vector<FrpVersionInfo>& versions,
             }
             info.downloadUrl = L"https://github.com/fatedier/frp/releases/download/" +
                                tag + L"/" + archive;
+            info.publishedAt = publishedAt;
             refreshed.push_back(info);
         }
     }
@@ -401,10 +432,11 @@ bool RefreshFrpVersionsFromGitHub(std::vector<FrpVersionInfo>& versions,
         return false;
     }
 
-    for (const auto& item : refreshed) {
-        if (!SaveFrpVersion(item, error)) {
-            return false;
-        }
+    std::sort(refreshed.begin(), refreshed.end(), [](const auto& a, const auto& b) {
+        return a.publishedAt > b.publishedAt;
+    });
+    if (!SaveFrpVersions(refreshed, error)) {
+        return false;
     }
     versions = refreshed;
     if (log) log(L"GitHub 版本同步完成，共 " + std::to_wstring(versions.size()) + L" 个版本");

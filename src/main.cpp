@@ -1,364 +1,43 @@
+#include "app.h"
+
 #include "config.h"
 #include "frpc_manager.h"
-#include "resource.h"
 #include "version_manager.h"
 
-#include <commctrl.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <shellapi.h>
 #include <windows.h>
 
 #include <algorithm>
+#include <cwctype>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace {
 
-constexpr wchar_t kWindowClass[] = L"FrpDeskWindow";
-constexpr UINT WM_TRAYICON = WM_APP + 1;
-constexpr UINT WM_APPEND_LOG = WM_APP + 2;
-constexpr UINT WM_DOWNLOAD_DONE = WM_APP + 3;
-constexpr UINT WM_FRPC_EXITED = WM_APP + 4;
-constexpr UINT WM_VERSIONS_REFRESHED = WM_APP + 5;
-
-constexpr UINT ID_TRAY = 100;
-constexpr UINT ID_NAV_STATUS = 101;
-constexpr UINT ID_NAV_PROXY = 102;
-constexpr UINT ID_NAV_VERSION = 103;
-constexpr UINT ID_NAV_FRPS = 104;
-constexpr UINT ID_NAV_LOG = 105;
-constexpr UINT ID_START = 201;
-constexpr UINT ID_STOP = 202;
-constexpr UINT ID_ADD_PROXY = 203;
-constexpr UINT ID_SAVE_FRPS = 204;
-constexpr UINT ID_DOWNLOAD = 205;
-constexpr UINT ID_REFRESH_VERSIONS = 206;
-constexpr UINT ID_ADD_PROXY_OK = 207;
-constexpr UINT ID_ADD_PROXY_CANCEL = 208;
-constexpr UINT ID_TRAY_SHOW = 301;
-constexpr UINT ID_TRAY_START = 302;
-constexpr UINT ID_TRAY_STOP = 303;
-constexpr UINT ID_TRAY_EXIT = 304;
-
-enum class Page : int {
-    Status = 0,
-    Proxy = 1,
-    Version = 2,
-    Frps = 3,
-    Log = 4
-};
-
-struct Controls {
-    HWND nav[5]{};
-    HWND pages[5]{};
-
-    HWND statusText{};
-    HWND statusVersion{};
-    HWND statusFrps{};
-    HWND statusProxy{};
-    HWND start{};
-    HWND stop{};
-
-    HWND proxySummary{};
-    HWND proxyCards{};
-    HWND addProxy{};
-
-    HWND versionSummary{};
-    HWND versionCards{};
-    HWND refreshVersions{};
-    HWND download{};
-    HWND mirrorLabel{};
-    HWND mirrorCombo{};
-
-    HWND frpsLabels[5]{};
-    HWND selectedVersion{};
-    HWND frpsPublicIP{};
-    HWND frpsPort{};
-    HWND authMethod{};
-    HWND authToken{};
-    HWND saveFrps{};
-
-    HWND log{};
-};
-
-HINSTANCE g_instance = nullptr;
-HWND g_mainWindow = nullptr;
-Controls g_controls;
 AppConfig g_config;
-FrpcManager g_frpc;
 std::vector<FrpVersionInfo> g_versions;
-NOTIFYICONDATAW g_nid{};
-Page g_currentPage = Page::Status;
-bool g_downloading = false;
-bool g_refreshingVersions = false;
-bool g_exiting = false;
+FrpcManager g_frpc;
+std::vector<std::string> g_logs;
+std::wstring g_downloadingVersion;
+int g_downloadProgress = 0;
+bool g_connectionTesting = false;
+std::wstring g_connectionTestStatus = L"尚未测试";
+std::mutex g_stateMutex;
 
-struct AddProxyDialogState {
-    HWND hwnd{};
-    HWND name{};
-    HWND localIP{};
-    HWND localPort{};
-    HWND remotePort{};
-    bool done = false;
-    bool accepted = false;
-    ProxyConfig proxy;
-};
-
-std::wstring LastErrorText(DWORD code = GetLastError()) {
-    wchar_t* buffer = nullptr;
-    DWORD len = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                   FORMAT_MESSAGE_IGNORE_INSERTS,
-                               nullptr, code, 0, reinterpret_cast<LPWSTR>(&buffer), 0, nullptr);
-    std::wstring message = len > 0 ? std::wstring(buffer, len) : L"未知错误";
-    if (buffer) LocalFree(buffer);
-    while (!message.empty() && (message.back() == L'\r' || message.back() == L'\n')) {
-        message.pop_back();
-    }
-    return message;
+slint::SharedString S(const std::wstring& value) {
+    return slint::SharedString(WideToUtf8(value));
 }
 
-void PostLog(const std::wstring& text) {
-    if (!g_mainWindow) return;
-    PostMessageW(g_mainWindow, WM_APPEND_LOG, 0,
-                 reinterpret_cast<LPARAM>(new std::wstring(text)));
-}
-
-std::wstring GetText(HWND hwnd) {
-    int len = GetWindowTextLengthW(hwnd);
-    std::wstring value(static_cast<size_t>(len + 1), L'\0');
-    GetWindowTextW(hwnd, value.data(), len + 1);
-    value.resize(static_cast<size_t>(len));
-    return value;
-}
-
-int GetIntText(HWND hwnd, int fallback) {
-    BOOL translated = FALSE;
-    int value = GetDlgItemInt(GetParent(hwnd), GetDlgCtrlID(hwnd), &translated, FALSE);
-    return translated ? value : fallback;
-}
-
-void SetText(HWND hwnd, const std::wstring& value) {
-    SetWindowTextW(hwnd, value.c_str());
-}
-
-void SetIntText(HWND hwnd, int value) {
-    SetWindowTextW(hwnd, std::to_wstring(value).c_str());
-}
-
-HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, DWORD exStyle,
-                 int id, HWND parent) {
-    HWND hwnd = CreateWindowExW(exStyle, cls, text, style, 0, 0, 0, 0, parent,
-                                reinterpret_cast<HMENU>(static_cast<intptr_t>(id)),
-                                g_instance, nullptr);
-    SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    return hwnd;
-}
-
-HWND MakeLabel(HWND parent, const wchar_t* text) {
-    return MakeControl(L"STATIC", text, WS_CHILD | WS_VISIBLE, 0, 0, parent);
-}
-
-HWND MakeEdit(HWND parent, int id) {
-    return MakeControl(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                       WS_BORDER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE, id, parent);
-}
-
-HWND MakeButton(HWND parent, int id, const wchar_t* text) {
-    return MakeControl(L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                       0, id, parent);
-}
-
-HWND MakePage(HWND parent) {
-    return MakeControl(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, parent);
-}
-
-LRESULT CALLBACK PageSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
-                                  UINT_PTR, DWORD_PTR) {
-    if (msg == WM_COMMAND && g_mainWindow) {
-        return SendMessageW(g_mainWindow, msg, wParam, lParam);
-    }
-    if (msg == WM_NCDESTROY) {
-        RemoveWindowSubclass(hwnd, PageSubclassProc, 1);
-    }
-    return DefSubclassProc(hwnd, msg, wParam, lParam);
-}
-
-void AppendLogToEdit(const std::wstring& rawText) {
-    if (!g_controls.log) return;
-
-    std::wstring text = rawText;
-    for (wchar_t& ch : text) {
-        if (ch == L'\n') ch = L'\r';
-    }
-    if (text.empty() || (text.back() != L'\r' && text.back() != L'\n')) {
-        text += L"\r\n";
-    }
-
-    int len = GetWindowTextLengthW(g_controls.log);
-    SendMessageW(g_controls.log, EM_SETSEL, len, len);
-    SendMessageW(g_controls.log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
-
-    LRESULT lineCount = SendMessageW(g_controls.log, EM_GETLINECOUNT, 0, 0);
-    if (lineCount > 1000) {
-        LRESULT cut = SendMessageW(g_controls.log, EM_LINEINDEX, lineCount - 1000, 0);
-        if (cut > 0) {
-            SendMessageW(g_controls.log, EM_SETSEL, 0, cut);
-            SendMessageW(g_controls.log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L""));
-        }
-    }
-}
-
-void FillVersionCombo() {
-    SendMessageW(g_controls.selectedVersion, CB_RESETCONTENT, 0, 0);
-    int selected = 0;
-    for (size_t i = 0; i < g_versions.size(); ++i) {
-        const auto& item = g_versions[i];
-        SendMessageW(g_controls.selectedVersion, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(item.displayName.c_str()));
-        if (item.version == g_config.selectedVersion) {
-            selected = static_cast<int>(i);
-        }
-    }
-    SendMessageW(g_controls.selectedVersion, CB_SETCURSEL, selected, 0);
-}
-
-void FillMirrorCombo() {
-    SendMessageW(g_controls.mirrorCombo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(g_controls.mirrorCombo, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"https://gh.zwy.one"));
-    SendMessageW(g_controls.mirrorCombo, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"direct"));
-    SetText(g_controls.mirrorCombo, g_config.downloadMirror);
-}
-
-void RebuildVersionCards() {
-    if (!g_controls.versionCards) return;
-    std::wstring text = L"";
-    for (const auto& item : g_versions) {
-        text += item.displayName + L"\r\n";
-        text += L"版本号: " + item.version + L"\r\n";
-        text += L"配置文件: " + GetVersionFilePath(item.version) + L"\r\n";
-        text += L"frpc: " + GetFrpcPathForVersion(item.version);
-        text += FileExists(GetFrpcPathForVersion(item.version)) ? L"  [已安装]\r\n\r\n" : L"  [未安装]\r\n\r\n";
-    }
-    if (text.empty()) {
-        text = L"暂无版本配置。";
-    }
-    SetText(g_controls.versionCards, text);
-
-    std::wstring summary = L"当前选择: " + g_config.selectedVersion +
-        L"    版本目录: " + GetVersionsDir();
-    SetText(g_controls.versionSummary, summary);
-}
-
-void RebuildProxyCards() {
-    std::wstring text;
-    for (size_t i = 0; i < g_config.proxies.size(); ++i) {
-        const auto& proxy = g_config.proxies[i];
-        text += L"TCP 代理 #" + std::to_wstring(i + 1) + L"\r\n";
-        text += L"名称: " + proxy.name + L"\r\n";
-        text += L"本地: " + proxy.localIP + L":" + std::to_wstring(proxy.localPort) + L"\r\n";
-        text += L"远端端口: " + std::to_wstring(proxy.remotePort) + L"\r\n\r\n";
-    }
-    if (text.empty()) {
-        text = L"暂无代理。点击“新增代理”创建 TCP 代理。";
-    }
-    SetText(g_controls.proxyCards, text);
-    SetText(g_controls.proxySummary, L"TCP 代理数量: " + std::to_wstring(g_config.proxies.size()));
-}
-
-bool LoadVersions() {
-    std::wstring error;
-    if (!LoadFrpVersions(g_versions, &error)) {
-        MessageBoxW(g_mainWindow, error.c_str(), L"读取版本失败", MB_ICONERROR);
-        return false;
-    }
-    const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
-    if (current) {
-        g_config.selectedVersion = current->version;
-    }
-    if (g_controls.selectedVersion) {
-        FillVersionCombo();
-        RebuildVersionCards();
-    }
-    return true;
-}
-
-void FillUi(const AppConfig& config) {
-    if (g_controls.selectedVersion) {
-        FillVersionCombo();
-    }
-    if (g_controls.mirrorCombo) {
-        FillMirrorCombo();
-    }
-    SetText(g_controls.frpsPublicIP, config.frpsPublicIP);
-    SetIntText(g_controls.frpsPort, config.frpsPort);
-    SendMessageW(g_controls.authMethod, CB_RESETCONTENT, 0, 0);
-    SendMessageW(g_controls.authMethod, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"token"));
-    SendMessageW(g_controls.authMethod, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"none"));
-    SendMessageW(g_controls.authMethod, CB_SETCURSEL, config.authMethod == L"none" ? 1 : 0, 0);
-    SetText(g_controls.authToken, config.authToken);
-
-    RebuildProxyCards();
-}
-
-bool ReadFrpsUi(AppConfig& config, bool requireComplete) {
-    int sel = static_cast<int>(SendMessageW(g_controls.selectedVersion, CB_GETCURSEL, 0, 0));
-    if (sel >= 0 && sel < static_cast<int>(g_versions.size())) {
-        config.selectedVersion = g_versions[static_cast<size_t>(sel)].version;
-    }
-
-    config.frpsPublicIP = GetText(g_controls.frpsPublicIP);
-    config.frpsPort = GetIntText(g_controls.frpsPort, 7000);
-    int methodSel = static_cast<int>(SendMessageW(g_controls.authMethod, CB_GETCURSEL, 0, 0));
-    config.authMethod = methodSel == 1 ? L"none" : L"token";
-    config.authToken = GetText(g_controls.authToken);
-    config.downloadMirror = GetText(g_controls.mirrorCombo);
-    if (config.downloadMirror.empty()) {
-        config.downloadMirror = L"https://gh.zwy.one";
-    }
-
-    if (requireComplete && config.frpsPublicIP.empty()) {
-        MessageBoxW(g_mainWindow, L"请在 frps 设置中填写公网 IP 或域名。", L"配置不完整",
-                    MB_ICONWARNING);
-        return false;
-    }
-    return true;
-}
-
-bool ReadProxyUi(AppConfig& config) {
-    if (config.proxies.empty()) {
-        config.proxies.push_back(ProxyConfig{});
-    }
-    return true;
-}
-
-bool SaveCurrentConfig(bool showSuccess, bool requireComplete) {
-    AppConfig next = g_config;
-    if (!ReadFrpsUi(next, requireComplete) || !ReadProxyUi(next)) {
-        return false;
-    }
-
-    std::wstring error;
-    if (!SaveConfig(next, &error)) {
-        MessageBoxW(g_mainWindow, error.c_str(), L"保存失败", MB_ICONERROR);
-        return false;
-    }
-    if (!WriteFrpcToml(next, &error)) {
-        MessageBoxW(g_mainWindow, error.c_str(), L"生成 frpc.toml 失败", MB_ICONERROR);
-        return false;
-    }
-    g_config = next;
-    RebuildProxyCards();
-    RebuildVersionCards();
-    PostLog(L"配置已保存: " + GetConfigPath());
-    PostLog(L"frpc.toml 已生成: " + GetTomlPath());
-    if (showSuccess) {
-        MessageBoxW(g_mainWindow, L"配置已保存。", L"frp-desk", MB_ICONINFORMATION);
-    }
-    return true;
+std::wstring W(const slint::SharedString& value) {
+    return Utf8ToWide(std::string(value.data(), value.size()));
 }
 
 std::wstring CurrentFrpcPath() {
@@ -369,606 +48,654 @@ const FrpVersionInfo* CurrentVersion() {
     return FindFrpVersion(g_versions, g_config.selectedVersion);
 }
 
-void UpdateButtons() {
-    bool running = g_frpc.IsRunning();
-    EnableWindow(g_controls.start, !running && !g_downloading);
-    EnableWindow(g_controls.stop, running);
-    EnableWindow(g_controls.download, !running && !g_downloading && !g_refreshingVersions);
-    EnableWindow(g_controls.addProxy, !g_downloading && !running);
-    EnableWindow(g_controls.saveFrps, !g_downloading);
-    EnableWindow(g_controls.refreshVersions, !g_downloading && !g_refreshingVersions);
-    EnableWindow(g_controls.mirrorCombo, !g_downloading);
-
-    SetWindowTextW(g_controls.statusText, running ? L"状态：运行中" :
-                   (g_downloading ? L"状态：正在下载 frpc" :
-                    (g_refreshingVersions ? L"状态：正在同步版本" : L"状态：未运行")));
-
-    SetText(g_controls.statusVersion, L"frp 版本：" + g_config.selectedVersion +
-                                  (FileExists(CurrentFrpcPath()) ? L"（已安装）" : L"（未安装）"));
-    SetText(g_controls.statusFrps, L"frps：" + g_config.frpsPublicIP + L":" +
-                               std::to_wstring(g_config.frpsPort));
-    SetText(g_controls.statusProxy, L"TCP 代理数量：" + std::to_wstring(g_config.proxies.size()));
-}
-
-void StartDownload() {
-    if (g_downloading) return;
-    AppConfig next = g_config;
-    ReadFrpsUi(next, false);
-    g_config.selectedVersion = next.selectedVersion;
-    g_config.downloadMirror = next.downloadMirror;
-    SaveConfig(g_config, nullptr);
-    const FrpVersionInfo* version = CurrentVersion();
-    if (!version) {
-        MessageBoxW(g_mainWindow, L"没有可用的 frp 版本配置。", L"无法下载", MB_ICONWARNING);
-        return;
-    }
-    FrpVersionInfo selected = *version;
-    std::wstring mirror = g_config.downloadMirror;
-    g_downloading = true;
-    UpdateButtons();
-    std::thread([selected, mirror]() {
-        std::wstring error;
-        bool ok = g_frpc.DownloadFrpc(selected, mirror, PostLog, &error);
-        if (!ok) {
-            PostLog(L"下载 frpc 失败: " + error);
-            PostMessageW(g_mainWindow, WM_DOWNLOAD_DONE, 0,
-                         reinterpret_cast<LPARAM>(new std::wstring(error)));
-            return;
+int VersionIndexFor(const std::wstring& version) {
+    for (size_t i = 0; i < g_versions.size(); ++i) {
+        if (g_versions[i].version == version) {
+            return static_cast<int>(i);
         }
-        PostMessageW(g_mainWindow, WM_DOWNLOAD_DONE, 1, 0);
-    }).detach();
+    }
+    return 0;
 }
 
-void StartRefreshVersions() {
-    if (g_refreshingVersions) return;
-    g_refreshingVersions = true;
-    UpdateButtons();
-    std::thread([]() {
-        std::vector<FrpVersionInfo> versions;
-        std::wstring error;
-        bool ok = RefreshFrpVersionsFromGitHub(versions, PostLog, &error);
-        if (ok) {
-            PostMessageW(g_mainWindow, WM_VERSIONS_REFRESHED, 1,
-                         reinterpret_cast<LPARAM>(new std::vector<FrpVersionInfo>(std::move(versions))));
+int DownloadSourceIndex(const std::wstring& mirror) {
+    return mirror == L"direct" ? 1 : 0;
+}
+
+std::wstring DownloadMirrorFromIndex(int index) {
+    return index == 1 ? L"direct" : L"https://gh.zwy.one";
+}
+
+int ParsePort(const std::wstring& text, int fallback) {
+    wchar_t* end = nullptr;
+    long value = std::wcstol(text.c_str(), &end, 10);
+    if (end == text.c_str() || value < 1 || value > 65535) {
+        return fallback;
+    }
+    return static_cast<int>(value);
+}
+
+bool TryParsePort(const std::wstring& text, int& port) {
+    wchar_t* end = nullptr;
+    long value = std::wcstol(text.c_str(), &end, 10);
+    while (end && *end != L'\0' && std::iswspace(static_cast<unsigned short>(*end))) {
+        ++end;
+    }
+    if (end == text.c_str() || !end || *end != L'\0' || value < 1 || value > 65535) {
+        return false;
+    }
+    port = static_cast<int>(value);
+    return true;
+}
+
+std::wstring WinsockErrorText(int code) {
+    wchar_t* buffer = nullptr;
+    DWORD len = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                   FORMAT_MESSAGE_IGNORE_INSERTS,
+                               nullptr, static_cast<DWORD>(code), 0,
+                               reinterpret_cast<LPWSTR>(&buffer), 0, nullptr);
+    std::wstring message = len > 0 ? std::wstring(buffer, len) : L"网络错误 " + std::to_wstring(code);
+    if (buffer) LocalFree(buffer);
+    while (!message.empty() && (message.back() == L'\r' || message.back() == L'\n')) {
+        message.pop_back();
+    }
+    return message;
+}
+
+bool TestTcpConnection(const std::wstring& host, int port, int timeoutMs, std::wstring* error) {
+    WSADATA data{};
+    int startup = WSAStartup(MAKEWORD(2, 2), &data);
+    if (startup != 0) {
+        if (error) *error = L"初始化网络失败: " + WinsockErrorText(startup);
+        return false;
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    addrinfo* results = nullptr;
+    std::string hostUtf8 = WideToUtf8(host);
+    std::string portText = std::to_string(port);
+    int resolved = getaddrinfo(hostUtf8.c_str(), portText.c_str(), &hints, &results);
+    if (resolved != 0) {
+        if (error) *error = L"解析地址失败: " + WinsockErrorText(resolved);
+        WSACleanup();
+        return false;
+    }
+
+    std::wstring lastError = L"连接失败";
+    for (addrinfo* item = results; item; item = item->ai_next) {
+        SOCKET sock = socket(item->ai_family, item->ai_socktype, item->ai_protocol);
+        if (sock == INVALID_SOCKET) {
+            lastError = WinsockErrorText(WSAGetLastError());
+            continue;
+        }
+
+        u_long nonBlocking = 1;
+        ioctlsocket(sock, FIONBIO, &nonBlocking);
+        int connected = connect(sock, item->ai_addr, static_cast<int>(item->ai_addrlen));
+        if (connected == 0) {
+            closesocket(sock);
+            freeaddrinfo(results);
+            WSACleanup();
+            return true;
+        }
+
+        int connectError = WSAGetLastError();
+        if (connectError == WSAEWOULDBLOCK || connectError == WSAEINPROGRESS ||
+            connectError == WSAEINVAL) {
+            fd_set writeSet;
+            FD_ZERO(&writeSet);
+            FD_SET(sock, &writeSet);
+            timeval timeout{};
+            timeout.tv_sec = timeoutMs / 1000;
+            timeout.tv_usec = (timeoutMs % 1000) * 1000;
+            int selected = select(0, nullptr, &writeSet, nullptr, &timeout);
+            if (selected > 0 && FD_ISSET(sock, &writeSet)) {
+                int socketError = 0;
+                int socketErrorLen = sizeof(socketError);
+                getsockopt(sock, SOL_SOCKET, SO_ERROR,
+                           reinterpret_cast<char*>(&socketError), &socketErrorLen);
+                if (socketError == 0) {
+                    closesocket(sock);
+                    freeaddrinfo(results);
+                    WSACleanup();
+                    return true;
+                }
+                lastError = WinsockErrorText(socketError);
+            } else if (selected == 0) {
+                lastError = L"连接超时";
+            } else {
+                lastError = WinsockErrorText(WSAGetLastError());
+            }
         } else {
-            PostLog(L"同步 GitHub 版本失败: " + error);
-            PostMessageW(g_mainWindow, WM_VERSIONS_REFRESHED, 0,
-                         reinterpret_cast<LPARAM>(new std::wstring(error)));
+            lastError = WinsockErrorText(connectError);
         }
-    }).detach();
+
+        closesocket(sock);
+    }
+
+    freeaddrinfo(results);
+    WSACleanup();
+    if (error) *error = lastError;
+    return false;
 }
 
-void StartFrpc() {
-    if (!SaveCurrentConfig(false, true)) {
-        return;
+std::wstring BuildDownloadUrl(const FrpVersionInfo& version, std::wstring mirrorBase) {
+    while (!mirrorBase.empty() && mirrorBase.back() == L'/') {
+        mirrorBase.pop_back();
     }
+    if (mirrorBase.empty() || mirrorBase == L"direct") {
+        return version.downloadUrl;
+    }
+    std::wstring tag = version.version;
+    if (tag.empty() || tag.front() != L'v') {
+        tag = L"v" + tag;
+    }
+    return mirrorBase + L"/github.com/fatedier/frp/releases/download/" +
+           tag + L"/" + version.archiveName;
+}
+
+bool CopyTextToClipboard(const std::wstring& text) {
+    if (!OpenClipboard(nullptr)) {
+        return false;
+    }
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!memory) {
+        CloseClipboard();
+        return false;
+    }
+    void* target = GlobalLock(memory);
+    if (!target) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+    memcpy(target, text.c_str(), bytes);
+    GlobalUnlock(memory);
+    if (!SetClipboardData(CF_UNICODETEXT, memory)) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+    CloseClipboard();
+    return true;
+}
+
+ProxyRow BuildProxyRow(const ProxyConfig& proxy, size_t index) {
+    ProxyRow row;
+    row.index = static_cast<int>(index + 1);
+    row.name = S(proxy.name);
+    row.local_ip = S(proxy.localIP);
+    row.local_port = proxy.localPort;
+    row.remote_port = proxy.remotePort;
+    return row;
+}
+
+std::shared_ptr<slint::Model<ProxyPair>> BuildProxyPairs() {
+    std::vector<ProxyPair> pairs;
+    pairs.reserve((g_config.proxies.size() + 1) / 2);
+    for (size_t i = 0; i < g_config.proxies.size(); i += 2) {
+        ProxyPair pair;
+        pair.left = BuildProxyRow(g_config.proxies[i], i);
+        if (i + 1 < g_config.proxies.size()) {
+            pair.right = BuildProxyRow(g_config.proxies[i + 1], i + 1);
+            pair.has_right = true;
+        } else {
+            pair.right = ProxyRow{};
+            pair.has_right = false;
+        }
+        pairs.push_back(std::move(pair));
+    }
+    return std::make_shared<slint::VectorModel<ProxyPair>>(std::move(pairs));
+}
+
+VersionRow BuildVersionRow(const FrpVersionInfo& item) {
+    VersionRow row;
+    const bool installed = FileExists(GetFrpcPathForVersion(item.version));
+    row.display_name = S(item.displayName);
+    row.version = S(item.version);
+    row.archive_name = S(item.archiveName);
+    row.config_path = S(GetVersionFilePath(item.version));
+    row.frpc_path = S(GetFrpcPathForVersion(item.version));
+    row.published_at = S(item.publishedAt);
+    row.installed = installed;
+    return row;
+}
+
+std::shared_ptr<slint::Model<VersionPair>> BuildVersionPairs() {
+    std::vector<VersionPair> pairs;
+    pairs.reserve((g_versions.size() + 1) / 2);
+    for (size_t i = 0; i < g_versions.size(); i += 2) {
+        VersionPair pair;
+        pair.left = BuildVersionRow(g_versions[i]);
+        if (i + 1 < g_versions.size()) {
+            pair.right = BuildVersionRow(g_versions[i + 1]);
+            pair.has_right = true;
+        } else {
+            pair.right = VersionRow{};
+            pair.has_right = false;
+        }
+        pairs.push_back(std::move(pair));
+    }
+    return std::make_shared<slint::VectorModel<VersionPair>>(std::move(pairs));
+}
+
+std::shared_ptr<slint::Model<slint::SharedString>> BuildVersionOptions() {
+    std::vector<slint::SharedString> options;
+    options.reserve(g_versions.size() > 0 ? g_versions.size() : 1);
+    for (const auto& item : g_versions) {
+        options.push_back(S(item.version));
+    }
+    if (options.empty()) {
+        options.push_back(S(g_config.selectedVersion.empty() ? L"0.69.1" : g_config.selectedVersion));
+    }
+    return std::make_shared<slint::VectorModel<slint::SharedString>>(std::move(options));
+}
+
+std::string BuildLogText() {
+    std::string text;
+    for (const auto& line : g_logs) {
+        text += line;
+        text += "\n";
+    }
+    return text;
+}
+
+using AppHandle = slint::ComponentHandle<AppWindow>;
+
+void RefreshUi(const AppHandle& ui) {
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ui->set_selected_version(S(g_config.selectedVersion));
+    ui->set_frpc_version_options(BuildVersionOptions());
+    ui->set_selected_version_index(VersionIndexFor(g_config.selectedVersion));
+    ui->set_frps_public_ip(S(g_config.frpsPublicIP));
+    ui->set_frps_port(g_config.frpsPort);
+    ui->set_frps_port_text(slint::SharedString(std::to_string(g_config.frpsPort)));
+    ui->set_connection_testing(g_connectionTesting);
+    ui->set_connection_test_status(S(g_connectionTestStatus));
+    ui->set_auth_method_index(g_config.authMethod == L"token" ? 1 : 0);
+    ui->set_auth_token(S(g_config.authToken));
+    ui->set_download_mirror(S(g_config.downloadMirror.empty() ? L"https://gh.zwy.one" : g_config.downloadMirror));
+    ui->set_download_source_index(DownloadSourceIndex(g_config.downloadMirror));
+    ui->set_proxy_pairs(BuildProxyPairs());
+    ui->set_proxy_count(static_cast<int>(g_config.proxies.size()));
+    ui->set_version_pairs(BuildVersionPairs());
+    ui->set_downloading_version(S(g_downloadingVersion));
+    ui->set_download_progress(g_downloadProgress);
+    ui->set_log_text(slint::SharedString(BuildLogText()));
+    ui->set_status_text(slint::SharedString(g_frpc.IsRunning() ? "运行中" : "未运行"));
+}
+
+void AddLog(const std::wstring& text, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    std::string utf8 = WideToUtf8(text);
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        size_t start = 0;
+        while (start < utf8.size()) {
+            size_t end = utf8.find('\n', start);
+            std::string line = utf8.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+                line.pop_back();
+            }
+            if (!line.empty()) {
+                g_logs.push_back(line);
+            }
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        if (utf8.empty()) g_logs.emplace_back("");
+        if (g_logs.size() > 500) {
+            g_logs.erase(g_logs.begin(), g_logs.begin() + static_cast<ptrdiff_t>(g_logs.size() - 500));
+        }
+    }
+
+    slint::invoke_from_event_loop([weak] {
+        if (auto ui = weak.lock()) {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            (*ui)->set_log_text(slint::SharedString(BuildLogText()));
+        }
+    });
+}
+
+void ReadUiToConfig(const AppHandle& ui) {
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+    int versionIndex = ui->get_selected_version_index();
+    if (versionIndex >= 0 && versionIndex < static_cast<int>(g_versions.size())) {
+        g_config.selectedVersion = g_versions[static_cast<size_t>(versionIndex)].version;
+    } else {
+        g_config.selectedVersion = W(ui->get_selected_version());
+    }
+    g_config.frpsPublicIP = W(ui->get_frps_public_ip());
+    g_config.frpsPort = ParsePort(W(ui->get_frps_port_text()), 7000);
+    g_config.authMethod = ui->get_auth_method_index() == 1 ? L"token" : L"none";
+    g_config.authToken = W(ui->get_auth_token());
+    g_config.downloadMirror = DownloadMirrorFromIndex(ui->get_download_source_index());
+    if (g_config.downloadMirror.empty()) {
+        g_config.downloadMirror = L"https://gh.zwy.one";
+    }
+    if (g_config.proxies.empty()) {
+        g_config.proxies.push_back(ProxyConfig{});
+    }
+}
+
+bool SaveCurrentConfig(const AppHandle& ui, bool requireComplete) {
+    ReadUiToConfig(ui);
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        if (requireComplete && g_config.frpsPublicIP.empty()) {
+            MessageBoxW(nullptr, L"请在 frps 设置中填写公网 IP 或域名。", L"配置不完整", MB_ICONWARNING);
+            return false;
+        }
+        std::wstring error;
+        if (!SaveConfig(g_config, &error)) {
+            MessageBoxW(nullptr, error.c_str(), L"保存失败", MB_ICONERROR);
+            return false;
+        }
+        if (!WriteFrpcToml(g_config, &error)) {
+            MessageBoxW(nullptr, error.c_str(), L"生成 frpc.toml 失败", MB_ICONERROR);
+            return false;
+        }
+    }
+    RefreshUi(ui);
+    return true;
+}
+
+bool LoadVersions() {
+    std::wstring error;
+    if (!LoadFrpVersions(g_versions, &error)) {
+        MessageBoxW(nullptr, error.c_str(), L"读取版本失败", MB_ICONERROR);
+        return false;
+    }
+    const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
+    if (current) g_config.selectedVersion = current->version;
+    return true;
+}
+
+void StartFrpc(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    if (!SaveCurrentConfig(ui, true)) return;
     if (!FileExists(CurrentFrpcPath())) {
-        MessageBoxW(g_mainWindow, L"当前版本未安装 frpc.exe，请到 frp版本管理 页面手动下载。", L"无法启动",
-                    MB_ICONWARNING);
+        MessageBoxW(nullptr, L"当前版本未安装 frpc.exe，请到 frp版本管理 页面手动下载。", L"无法启动", MB_ICONWARNING);
         return;
     }
 
     std::wstring error;
     bool ok = g_frpc.Start(CurrentFrpcPath(), GetTomlPath(),
                            std::filesystem::path(CurrentFrpcPath()).parent_path().wstring(),
-                           PostLog,
-                           [](DWORD) { PostMessageW(g_mainWindow, WM_FRPC_EXITED, 0, 0); },
+                           [weak](const std::wstring& line) { AddLog(line, weak); },
+                           [weak](DWORD) {
+                               slint::invoke_from_event_loop([weak] {
+                                   if (auto ui = weak.lock()) RefreshUi(*ui);
+                               });
+                           },
                            &error);
     if (!ok) {
-        MessageBoxW(g_mainWindow, error.c_str(), L"启动失败", MB_ICONERROR);
-        PostLog(L"启动失败: " + error);
+        MessageBoxW(nullptr, error.c_str(), L"启动失败", MB_ICONERROR);
+        AddLog(L"启动失败: " + error, weak);
     }
-    UpdateButtons();
+    RefreshUi(ui);
 }
 
-void StopFrpc() {
-    g_frpc.Stop();
-    PostLog(L"已请求停止 frpc");
-    UpdateButtons();
-}
-
-void SwitchPage(Page page) {
-    g_currentPage = page;
-    for (int i = 0; i < 5; ++i) {
-        ShowWindow(g_controls.pages[i], i == static_cast<int>(page) ? SW_SHOW : SW_HIDE);
-        EnableWindow(g_controls.nav[i], i != static_cast<int>(page));
-    }
-    if (page == Page::Version) {
-        LoadVersions();
-    }
-    UpdateButtons();
-}
-
-void AddTrayIcon(HWND hwnd) {
-    g_nid = {};
-    g_nid.cbSize = sizeof(g_nid);
-    g_nid.hWnd = hwnd;
-    g_nid.uID = ID_TRAY;
-    g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-    g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APP));
-    if (!g_nid.hIcon) {
-        g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    }
-    wcscpy_s(g_nid.szTip, L"frp-desk");
-    Shell_NotifyIconW(NIM_ADD, &g_nid);
-}
-
-void RemoveTrayIcon() {
-    if (g_nid.cbSize) {
-        Shell_NotifyIconW(NIM_DELETE, &g_nid);
-    }
-}
-
-void ShowMainWindow() {
-    ShowWindow(g_mainWindow, SW_SHOW);
-    SetForegroundWindow(g_mainWindow);
-}
-
-void ShowTrayMenu() {
-    POINT pt{};
-    GetCursorPos(&pt);
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, ID_TRAY_SHOW, L"显示窗口");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, g_frpc.IsRunning() ? MF_GRAYED : MF_STRING, ID_TRAY_START, L"启动");
-    AppendMenuW(menu, g_frpc.IsRunning() ? MF_STRING : MF_GRAYED, ID_TRAY_STOP, L"停止");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, L"退出");
-    SetForegroundWindow(g_mainWindow);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_mainWindow, nullptr);
-    DestroyMenu(menu);
-}
-
-void LayoutFormRow(HWND label, HWND edit, int x, int& y, int labelW, int editW);
-
-LRESULT CALLBACK AddProxyDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    auto* state = reinterpret_cast<AddProxyDialogState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    switch (msg) {
-    case WM_CREATE: {
-        auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
-        state = reinterpret_cast<AddProxyDialogState*>(create->lpCreateParams);
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
-        state->hwnd = hwnd;
-
-        HWND labels[4]{};
-        labels[0] = MakeLabel(hwnd, L"代理名称");
-        state->name = MakeEdit(hwnd, 2101);
-        labels[1] = MakeLabel(hwnd, L"本地 IP");
-        state->localIP = MakeEdit(hwnd, 2102);
-        labels[2] = MakeLabel(hwnd, L"本地端口");
-        state->localPort = MakeEdit(hwnd, 2103);
-        labels[3] = MakeLabel(hwnd, L"远端端口");
-        state->remotePort = MakeEdit(hwnd, 2104);
-
-        MakeButton(hwnd, ID_ADD_PROXY_OK, L"保存");
-        MakeButton(hwnd, ID_ADD_PROXY_CANCEL, L"取消");
-
-        SetText(state->name, state->proxy.name);
-        SetText(state->localIP, state->proxy.localIP);
-        SetIntText(state->localPort, state->proxy.localPort);
-        SetIntText(state->remotePort, state->proxy.remotePort);
-
-        for (int i = 0; i < 4; ++i) {
-            SetWindowLongPtrW(labels[i], GWLP_ID, 2200 + i);
+void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak,
+                   const std::wstring& requestedVersion = L"") {
+    ReadUiToConfig(ui);
+    FrpVersionInfo selected;
+    std::wstring mirror;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        if (!g_downloadingVersion.empty()) {
+            MessageBoxW(nullptr, L"已有版本正在下载，请等待当前下载完成。", L"正在下载", MB_ICONINFORMATION);
+            return;
         }
-        return 0;
+        if (!requestedVersion.empty()) {
+            g_config.selectedVersion = requestedVersion;
+            SaveConfig(g_config, nullptr);
+        }
+        const FrpVersionInfo* version = requestedVersion.empty()
+            ? CurrentVersion()
+            : FindFrpVersion(g_versions, requestedVersion);
+        if (!version) {
+            MessageBoxW(nullptr, L"没有可用的 frp 版本配置。", L"无法下载", MB_ICONWARNING);
+            return;
+        }
+        selected = *version;
+        mirror = g_config.downloadMirror;
+        g_downloadingVersion = selected.version;
+        g_downloadProgress = 1;
+        SaveConfig(g_config, nullptr);
     }
-    case WM_SIZE: {
-        int margin = 16;
-        int y = 16;
-        int labelW = 84;
-        int editW = 250;
-        HWND labels[4]{
-            GetDlgItem(hwnd, 2200),
-            GetDlgItem(hwnd, 2201),
-            GetDlgItem(hwnd, 2202),
-            GetDlgItem(hwnd, 2203)
-        };
-        LayoutFormRow(labels[0], state->name, margin, y, labelW, editW);
-        LayoutFormRow(labels[1], state->localIP, margin, y, labelW, editW);
-        LayoutFormRow(labels[2], state->localPort, margin, y, labelW, editW);
-        LayoutFormRow(labels[3], state->remotePort, margin, y, labelW, editW);
-        MoveWindow(GetDlgItem(hwnd, ID_ADD_PROXY_OK), margin + labelW + 12, y + 8, 88, 30, TRUE);
-        MoveWindow(GetDlgItem(hwnd, ID_ADD_PROXY_CANCEL), margin + labelW + 108, y + 8, 88, 30, TRUE);
-        return 0;
-    }
-    case WM_COMMAND:
-        if (LOWORD(wParam) == ID_ADD_PROXY_OK) {
-            state->proxy.name = GetText(state->name);
-            state->proxy.localIP = GetText(state->localIP);
-            state->proxy.localPort = GetIntText(state->localPort, 0);
-            state->proxy.remotePort = GetIntText(state->remotePort, 0);
-            if (state->proxy.name.empty() || state->proxy.localIP.empty() ||
-                state->proxy.localPort <= 0 || state->proxy.remotePort <= 0) {
-                MessageBoxW(hwnd, L"请完整填写代理名称、本地 IP、本地端口、远端端口。",
-                            L"代理配置不完整", MB_ICONWARNING);
-                return 0;
+
+    ui->set_status_text("正在下载 frpc");
+    ui->set_selected_version(S(selected.version));
+    ui->set_selected_version_index(VersionIndexFor(selected.version));
+    ui->set_downloading_version(S(selected.version));
+    ui->set_download_progress(1);
+    std::thread([selected, mirror, weak]() {
+        std::wstring error;
+        bool ok = g_frpc.DownloadFrpc(selected, mirror, [weak](const std::wstring& line) {
+            AddLog(line, weak);
+        }, [weak, version = selected.version](int progress) {
+            if (progress < 0) progress = 0;
+            if (progress > 100) progress = 100;
+            {
+                std::lock_guard<std::mutex> lock(g_stateMutex);
+                if (g_downloadingVersion == version) {
+                    g_downloadProgress = progress;
+                }
             }
-            state->accepted = true;
-            DestroyWindow(hwnd);
-            return 0;
-        }
-        if (LOWORD(wParam) == ID_ADD_PROXY_CANCEL) {
-            DestroyWindow(hwnd);
-            return 0;
-        }
-        break;
-    case WM_CLOSE:
-        DestroyWindow(hwnd);
-        return 0;
-    case WM_DESTROY:
-        if (state) {
-            state->done = true;
-        }
-        return 0;
-    default:
-        break;
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
-
-bool ShowAddProxyDialog(ProxyConfig& proxy) {
-    constexpr wchar_t kAddProxyClass[] = L"FrpDeskAddProxyWindow";
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = AddProxyDialogProc;
-        wc.hInstance = g_instance;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-        wc.lpszClassName = kAddProxyClass;
-        if (!RegisterClassExW(&wc)) {
-            MessageBoxW(g_mainWindow, (L"注册新增代理窗口失败: " + LastErrorText()).c_str(),
-                        L"frp-desk", MB_ICONERROR);
-            return false;
-        }
-        registered = true;
-    }
-
-    AddProxyDialogState state;
-    state.proxy = proxy;
-    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, kAddProxyClass, L"新增 TCP 代理",
-                                WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 410, 235,
-                                g_mainWindow, nullptr, g_instance, &state);
-    if (!hwnd) {
-        MessageBoxW(g_mainWindow, (L"创建新增代理窗口失败: " + LastErrorText()).c_str(),
-                    L"frp-desk", MB_ICONERROR);
-        return false;
-    }
-
-    EnableWindow(g_mainWindow, FALSE);
-    MSG msg{};
-    while (!state.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        if (!IsDialogMessageW(hwnd, &msg)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-    EnableWindow(g_mainWindow, TRUE);
-    SetForegroundWindow(g_mainWindow);
-    if (state.accepted) {
-        proxy = state.proxy;
-    }
-    return state.accepted;
-}
-
-void AddProxy() {
-    ProxyConfig proxy;
-    proxy.name = L"tcp" + std::to_wstring(g_config.proxies.size() + 1);
-    if (ShowAddProxyDialog(proxy)) {
-        g_config.proxies.push_back(proxy);
-        SaveCurrentConfig(false, false);
-        RebuildProxyCards();
-        UpdateButtons();
-        PostLog(L"已新增 TCP 代理: " + proxy.name);
-    }
-}
-
-void LayoutFormRow(HWND label, HWND edit, int x, int& y, int labelW, int editW) {
-    MoveWindow(label, x, y + 5, labelW, 20, TRUE);
-    MoveWindow(edit, x + labelW + 12, y, editW, 26, TRUE);
-    y += 34;
-}
-
-void Layout(HWND hwnd) {
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    int w = static_cast<int>(rc.right - rc.left);
-    int h = static_cast<int>(rc.bottom - rc.top);
-    int menuW = 178;
-    int margin = 14;
-    int pageX = menuW + 1;
-    int pageW = std::max(360, w - pageX);
-
-    for (int i = 0; i < 5; ++i) {
-        MoveWindow(g_controls.nav[i], 12, 20 + i * 42, menuW - 24, 34, TRUE);
-        MoveWindow(g_controls.pages[i], pageX, 0, pageW, h, TRUE);
-    }
-
-    int x = margin;
-    int y = 20;
-    int fullW = pageW - margin * 2;
-
-    MoveWindow(g_controls.statusText, x, y, fullW, 28, TRUE); y += 42;
-    MoveWindow(g_controls.statusVersion, x, y, fullW, 24, TRUE); y += 30;
-    MoveWindow(g_controls.statusFrps, x, y, fullW, 24, TRUE); y += 30;
-    MoveWindow(g_controls.statusProxy, x, y, fullW, 24, TRUE); y += 44;
-    MoveWindow(g_controls.start, x, y, 100, 34, TRUE);
-    MoveWindow(g_controls.stop, x + 112, y, 100, 34, TRUE);
-
-    y = 20;
-    int labelW = 92;
-    int editW = std::max(160, fullW - labelW - 12);
-    MoveWindow(g_controls.proxySummary, x, y, fullW, 24, TRUE); y += 34;
-    MoveWindow(g_controls.addProxy, x, y, 120, 32, TRUE); y += 46;
-    MoveWindow(g_controls.proxyCards, x, y, fullW, std::max(160, h - y - margin), TRUE);
-
-    y = 20;
-    MoveWindow(g_controls.versionSummary, x, y, fullW, 24, TRUE); y += 34;
-    MoveWindow(g_controls.mirrorLabel, x, y + 5, 82, 22, TRUE);
-    MoveWindow(g_controls.mirrorCombo, x + 92, y, std::min(260, fullW - 92), 120, TRUE);
-    y += 38;
-    MoveWindow(g_controls.refreshVersions, x, y, 140, 32, TRUE);
-    MoveWindow(g_controls.download, x + 152, y, 130, 32, TRUE); y += 46;
-    MoveWindow(g_controls.versionCards, x, y, fullW, std::max(160, h - y - margin), TRUE);
-
-    y = 20;
-    LayoutFormRow(g_controls.frpsLabels[0], g_controls.selectedVersion, x, y, labelW, editW);
-    LayoutFormRow(g_controls.frpsLabels[1], g_controls.frpsPublicIP, x, y, labelW, editW);
-    LayoutFormRow(g_controls.frpsLabels[2], g_controls.frpsPort, x, y, labelW, editW);
-    LayoutFormRow(g_controls.frpsLabels[3], g_controls.authMethod, x, y, labelW, editW);
-    LayoutFormRow(g_controls.frpsLabels[4], g_controls.authToken, x, y, labelW, editW);
-    MoveWindow(g_controls.saveFrps, x, y + 10, 120, 34, TRUE);
-
-    MoveWindow(g_controls.log, margin, margin, pageW - margin * 2, h - margin * 2, TRUE);
-}
-
-void CreateControls(HWND hwnd) {
-    g_controls.nav[0] = MakeButton(hwnd, ID_NAV_STATUS, L"运行状态");
-    g_controls.nav[1] = MakeButton(hwnd, ID_NAV_PROXY, L"代理设置");
-    g_controls.nav[2] = MakeButton(hwnd, ID_NAV_VERSION, L"frp版本管理");
-    g_controls.nav[3] = MakeButton(hwnd, ID_NAV_FRPS, L"frps设置");
-    g_controls.nav[4] = MakeButton(hwnd, ID_NAV_LOG, L"日志界面");
-
-    for (int i = 0; i < 5; ++i) {
-        g_controls.pages[i] = MakePage(hwnd);
-        SetWindowSubclass(g_controls.pages[i], PageSubclassProc, 1, 0);
-    }
-
-    HWND statusPage = g_controls.pages[static_cast<int>(Page::Status)];
-    g_controls.statusText = MakeLabel(statusPage, L"状态：未运行");
-    g_controls.statusVersion = MakeLabel(statusPage, L"frp 版本：");
-    g_controls.statusFrps = MakeLabel(statusPage, L"frps：");
-    g_controls.statusProxy = MakeLabel(statusPage, L"TCP 代理：");
-    g_controls.start = MakeButton(statusPage, ID_START, L"启动服务");
-    g_controls.stop = MakeButton(statusPage, ID_STOP, L"停止服务");
-
-    HWND proxyPage = g_controls.pages[static_cast<int>(Page::Proxy)];
-    g_controls.proxySummary = MakeLabel(proxyPage, L"TCP 代理数量: 0");
-    g_controls.addProxy = MakeButton(proxyPage, ID_ADD_PROXY, L"新增代理");
-    g_controls.proxyCards = MakeControl(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER |
-                                        WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
-                                        ES_READONLY, WS_EX_CLIENTEDGE, 1001, proxyPage);
-
-    HWND versionPage = g_controls.pages[static_cast<int>(Page::Version)];
-    g_controls.versionSummary = MakeLabel(versionPage, L"版本目录：");
-    g_controls.mirrorLabel = MakeLabel(versionPage, L"镜像站点");
-    g_controls.mirrorCombo = MakeControl(L"COMBOBOX", L"",
-                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                         CBS_DROPDOWN | WS_VSCROLL,
-                                         0, 1100, versionPage);
-    g_controls.refreshVersions = MakeButton(versionPage, ID_REFRESH_VERSIONS, L"同步GitHub版本");
-    g_controls.download = MakeButton(versionPage, ID_DOWNLOAD, L"下载当前版本");
-    g_controls.versionCards = MakeControl(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER |
-                                          WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
-                                          ES_READONLY, WS_EX_CLIENTEDGE, 1101, versionPage);
-
-    HWND frpsPage = g_controls.pages[static_cast<int>(Page::Frps)];
-    g_controls.frpsLabels[0] = MakeLabel(frpsPage, L"frp 版本");
-    g_controls.selectedVersion = MakeControl(L"COMBOBOX", L"",
-                                             WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                             CBS_DROPDOWNLIST | WS_VSCROLL,
-                                             0, 1201, frpsPage);
-    g_controls.frpsLabels[1] = MakeLabel(frpsPage, L"公网 IP");
-    g_controls.frpsPublicIP = MakeEdit(frpsPage, 1202);
-    g_controls.frpsLabels[2] = MakeLabel(frpsPage, L"端口");
-    g_controls.frpsPort = MakeEdit(frpsPage, 1203);
-    g_controls.frpsLabels[3] = MakeLabel(frpsPage, L"验证方式");
-    g_controls.authMethod = MakeControl(L"COMBOBOX", L"",
-                                        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                        CBS_DROPDOWNLIST | WS_VSCROLL,
-                                        0, 1204, frpsPage);
-    g_controls.frpsLabels[4] = MakeLabel(frpsPage, L"Token");
-    g_controls.authToken = MakeEdit(frpsPage, 1205);
-    g_controls.saveFrps = MakeButton(frpsPage, ID_SAVE_FRPS, L"保存 frps");
-
-    HWND logPage = g_controls.pages[static_cast<int>(Page::Log)];
-    g_controls.log = MakeControl(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER |
-                                 WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL |
-                                 ES_READONLY, WS_EX_CLIENTEDGE, 1301, logPage);
-}
-
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_CREATE:
-        g_mainWindow = hwnd;
-        CreateControls(hwnd);
-        LoadVersions();
-        FillUi(g_config);
-        AddTrayIcon(hwnd);
-        SwitchPage(Page::Status);
-        PostLog(L"运行目录: " + GetAppDataDir());
-        return 0;
-    case WM_SIZE:
-        Layout(hwnd);
-        return 0;
-    case WM_COMMAND:
-        switch (LOWORD(wParam)) {
-        case ID_NAV_STATUS: SwitchPage(Page::Status); break;
-        case ID_NAV_PROXY: SwitchPage(Page::Proxy); break;
-        case ID_NAV_VERSION: SwitchPage(Page::Version); break;
-        case ID_NAV_FRPS: SwitchPage(Page::Frps); break;
-        case ID_NAV_LOG: SwitchPage(Page::Log); break;
-        case ID_ADD_PROXY:
-            AddProxy();
-            break;
-        case ID_SAVE_FRPS:
-            SaveCurrentConfig(true, false);
-            UpdateButtons();
-            break;
-        case ID_START:
-        case ID_TRAY_START:
-            StartFrpc();
-            break;
-        case ID_STOP:
-        case ID_TRAY_STOP:
-            StopFrpc();
-            break;
-        case ID_DOWNLOAD:
-            StartDownload();
-            break;
-        case ID_REFRESH_VERSIONS:
-            StartRefreshVersions();
-            break;
-        case ID_TRAY_SHOW:
-            ShowMainWindow();
-            break;
-        case ID_TRAY_EXIT:
-            g_exiting = true;
-            DestroyWindow(hwnd);
-            break;
-        default:
-            if (HIWORD(wParam) == CBN_SELCHANGE &&
-                reinterpret_cast<HWND>(lParam) == g_controls.selectedVersion) {
-                AppConfig next = g_config;
-                ReadFrpsUi(next, false);
-                g_config.selectedVersion = next.selectedVersion;
-                RebuildVersionCards();
-                UpdateButtons();
+            slint::invoke_from_event_loop([weak, version, progress] {
+                if (auto ui = weak.lock()) {
+                    (*ui)->set_downloading_version(S(version));
+                    (*ui)->set_download_progress(progress);
+                }
+            });
+        }, &error);
+        slint::invoke_from_event_loop([weak, ok, error] {
+            if (auto ui = weak.lock()) {
+                if (!ok) {
+                    MessageBoxW(nullptr, (L"下载 frpc 失败。\n\n" + error).c_str(), L"下载失败", MB_ICONWARNING);
+                } else {
+                    MessageBoxW(nullptr, L"frpc.exe 下载完成。", L"frp-desk", MB_ICONINFORMATION);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_stateMutex);
+                    g_downloadingVersion.clear();
+                    g_downloadProgress = 0;
+                }
+                RefreshUi(*ui);
             }
-            break;
-        }
-        return 0;
-    case WM_TRAYICON:
-        if (LOWORD(lParam) == WM_LBUTTONDBLCLK) {
-            ShowMainWindow();
-        } else if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU) {
-            ShowTrayMenu();
-        }
-        return 0;
-    case WM_APPEND_LOG: {
-        std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(lParam));
-        AppendLogToEdit(*text);
-        return 0;
-    }
-    case WM_DOWNLOAD_DONE:
-        g_downloading = false;
-        RebuildVersionCards();
-        UpdateButtons();
-        if (wParam == 0) {
-            std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(lParam));
-            MessageBoxW(hwnd,
-                        (L"下载 frpc 失败。\n\n" + *error +
-                         L"\n\n可以手动把 frpc.exe 放到:\n" + CurrentFrpcPath()).c_str(),
-                        L"下载失败", MB_ICONWARNING);
-        } else {
-            MessageBoxW(hwnd, L"frpc.exe 下载完成。", L"frp-desk", MB_ICONINFORMATION);
-        }
-        return 0;
-    case WM_FRPC_EXITED:
-        UpdateButtons();
-        return 0;
-    case WM_VERSIONS_REFRESHED:
-        g_refreshingVersions = false;
-        if (wParam == 1) {
-            std::unique_ptr<std::vector<FrpVersionInfo>> versions(
-                reinterpret_cast<std::vector<FrpVersionInfo>*>(lParam));
-            g_versions = std::move(*versions);
-            const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
-            if (current) {
-                g_config.selectedVersion = current->version;
+        });
+    }).detach();
+}
+
+void StartRefreshVersions(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    ui->set_status_text("正在同步版本");
+    std::thread([weak]() {
+        std::vector<FrpVersionInfo> versions;
+        std::wstring error;
+        bool ok = RefreshFrpVersionsFromGitHub(versions, [weak](const std::wstring& line) {
+            AddLog(line, weak);
+        }, &error);
+
+        slint::invoke_from_event_loop([weak, ok, error, versions = std::move(versions)]() mutable {
+            if (auto ui = weak.lock()) {
+                if (ok) {
+                    {
+                        std::lock_guard<std::mutex> lock(g_stateMutex);
+                        g_versions = std::move(versions);
+                        const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
+                        if (current) g_config.selectedVersion = current->version;
+                    }
+                    MessageBoxW(nullptr, L"GitHub frp 版本同步完成。", L"frp-desk", MB_ICONINFORMATION);
+                } else {
+                    MessageBoxW(nullptr, (L"同步 GitHub 版本失败。\n\n" + error).c_str(), L"同步失败", MB_ICONWARNING);
+                }
+                RefreshUi(*ui);
             }
-            FillVersionCombo();
-            RebuildVersionCards();
-            MessageBoxW(hwnd, L"GitHub frp 版本同步完成。", L"frp-desk", MB_ICONINFORMATION);
-        } else {
-            std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(lParam));
-            MessageBoxW(hwnd, (L"同步 GitHub 版本失败。\n\n" + *error).c_str(),
-                        L"同步失败", MB_ICONWARNING);
+        });
+    }).detach();
+}
+
+void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    std::wstring host = W(ui->get_frps_public_ip());
+    int port = 0;
+    if (host.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_connectionTestStatus = L"请先填写公网 IP 或域名。";
         }
-        UpdateButtons();
-        return 0;
-    case WM_CLOSE:
-        if (!g_exiting) {
-            ShowWindow(hwnd, SW_HIDE);
-            return 0;
-        }
-        break;
-    case WM_DESTROY:
-        RemoveTrayIcon();
-        g_frpc.Stop();
-        PostQuitMessage(0);
-        return 0;
-    default:
-        break;
+        ui->set_connection_test_status(S(L"请先填写公网 IP 或域名。"));
+        return;
     }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    if (!TryParsePort(W(ui->get_frps_port_text()), port)) {
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_connectionTestStatus = L"端口无效，请输入 1-65535。";
+        }
+        ui->set_connection_test_status(S(L"端口无效，请输入 1-65535。"));
+        return;
+    }
+
+    std::wstring testingStatus;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        if (g_connectionTesting) {
+            return;
+        }
+        g_connectionTesting = true;
+        g_connectionTestStatus = L"正在测试 " + host + L":" + std::to_wstring(port) + L" ...";
+        testingStatus = g_connectionTestStatus;
+    }
+    ui->set_connection_testing(true);
+    ui->set_connection_test_status(S(testingStatus));
+
+    std::thread([weak, host, port]() {
+        std::wstring error;
+        bool ok = TestTcpConnection(host, port, 3000, &error);
+        slint::invoke_from_event_loop([weak, host, port, ok, error] {
+            if (auto ui = weak.lock()) {
+                std::wstring status;
+                if (ok) {
+                    status = L"端口可连接: " + host + L":" + std::to_wstring(port);
+                    AddLog(L"连通性测试成功: " + host + L":" + std::to_wstring(port), weak);
+                } else {
+                    status = L"连接失败: " + error;
+                    AddLog(L"连通性测试失败: " + host + L":" + std::to_wstring(port) + L" - " + error,
+                           weak);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_stateMutex);
+                    g_connectionTesting = false;
+                    g_connectionTestStatus = status;
+                }
+                (*ui)->set_connection_testing(false);
+                (*ui)->set_connection_test_status(S(status));
+            }
+        });
+    }).detach();
+}
+
+void CopyDownloadUrl(const AppHandle& ui, const slint::SharedString& versionText) {
+    ReadUiToConfig(ui);
+    std::wstring version = W(versionText);
+    std::wstring url;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        const FrpVersionInfo* item = FindFrpVersion(g_versions, version);
+        if (!item) {
+            MessageBoxW(nullptr, L"没有找到该版本的下载信息。", L"复制失败", MB_ICONWARNING);
+            return;
+        }
+        url = BuildDownloadUrl(*item, g_config.downloadMirror);
+    }
+    if (!CopyTextToClipboard(url)) {
+        MessageBoxW(nullptr, L"写入剪贴板失败。", L"复制失败", MB_ICONWARNING);
+        return;
+    }
+    MessageBoxW(nullptr, L"下载链接已复制到剪贴板。", L"frp-desk", MB_ICONINFORMATION);
+}
+
+void OpenVersionFolder(const slint::SharedString& versionText) {
+    std::wstring version = W(versionText);
+    std::wstring frpcPath = GetFrpcPathForVersion(version);
+    std::filesystem::path folder = std::filesystem::path(frpcPath).parent_path();
+    if (!std::filesystem::exists(folder)) {
+        MessageBoxW(nullptr, L"该版本尚未下载，本地目录不存在。", L"无法打开目录", MB_ICONWARNING);
+        return;
+    }
+    HINSTANCE result = ShellExecuteW(nullptr, L"open", folder.wstring().c_str(),
+                                     nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<intptr_t>(result) <= 32) {
+        MessageBoxW(nullptr, L"打开本地目录失败。", L"frp-desk", MB_ICONWARNING);
+    }
 }
 
 } // namespace
 
-int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
-    g_instance = instance;
-
-    INITCOMMONCONTROLSEX icc{};
-    icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_STANDARD_CLASSES;
-    InitCommonControlsEx(&icc);
-
+int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     std::wstring error;
-    if (!EnsureAppDirectories(&error)) {
-        MessageBoxW(nullptr, error.c_str(), L"frp-desk", MB_ICONERROR);
-        return 1;
-    }
+    EnsureAppDirectories(&error);
     EnsureDefaultVersionFiles(&error);
     LoadConfig(g_config, &error);
+    LoadVersions();
 
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = instance;
-    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP));
-    if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-    wc.lpszClassName = kWindowClass;
-    wc.hIconSm = wc.hIcon;
+    auto ui = AppWindow::create();
+    slint::ComponentWeakHandle<AppWindow> weak(ui);
 
-    if (!RegisterClassExW(&wc)) {
-        MessageBoxW(nullptr, (L"注册窗口类失败: " + LastErrorText()).c_str(),
-                    L"frp-desk", MB_ICONERROR);
-        return 1;
-    }
+    AddLog(L"运行目录: " + GetAppDataDir(), weak);
+    RefreshUi(ui);
 
-    HWND hwnd = CreateWindowExW(0, kWindowClass, L"frp-desk - 极轻 frp 客户端",
-                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                                760, 560, nullptr, nullptr, instance, nullptr);
-    if (!hwnd) {
-        MessageBoxW(nullptr, (L"创建窗口失败: " + LastErrorText()).c_str(),
-                    L"frp-desk", MB_ICONERROR);
-        return 1;
-    }
+    ui->on_start_service([ui, weak] { StartFrpc(ui, weak); });
+    ui->on_stop_service([ui] {
+        g_frpc.Stop();
+        RefreshUi(ui);
+    });
+    ui->on_save_frps([ui] {
+        if (SaveCurrentConfig(ui, false)) {
+            MessageBoxW(nullptr, L"配置已保存。", L"frp-desk", MB_ICONINFORMATION);
+        }
+    });
+    ui->on_test_frps_connection([ui, weak] { StartConnectionTest(ui, weak); });
+    ui->on_sync_versions([ui, weak] { StartRefreshVersions(ui, weak); });
+    ui->on_download_current([ui, weak] { StartDownload(ui, weak); });
+    ui->on_download_version([ui, weak](slint::SharedString version) {
+        StartDownload(ui, weak, W(version));
+    });
+    ui->on_copy_download_url([ui](slint::SharedString version) {
+        CopyDownloadUrl(ui, version);
+    });
+    ui->on_open_version_folder([](slint::SharedString version) {
+        OpenVersionFolder(version);
+    });
+    ui->on_clear_log([ui] {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        g_logs.clear();
+        ui->set_log_text("");
+    });
+    ui->on_add_proxy([ui](slint::SharedString name, slint::SharedString localIp,
+                          int localPort, int remotePort) {
+        ProxyConfig proxy;
+        proxy.name = W(name);
+        proxy.localIP = W(localIp);
+        proxy.localPort = localPort;
+        proxy.remotePort = remotePort;
+        if (proxy.name.empty() || proxy.localIP.empty() || proxy.localPort <= 0 || proxy.remotePort <= 0) {
+            MessageBoxW(nullptr, L"请完整填写代理名称、本地 IP、本地端口、远端端口。", L"代理配置不完整", MB_ICONWARNING);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_config.proxies.push_back(proxy);
+            SaveConfig(g_config, nullptr);
+            WriteFrpcToml(g_config, nullptr);
+        }
+        RefreshUi(ui);
+    });
 
-    ShowWindow(hwnd, showCmd);
-    UpdateWindow(hwnd);
-
-    MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    return static_cast<int>(msg.wParam);
+    ui->run();
+    g_frpc.Stop();
+    return 0;
 }

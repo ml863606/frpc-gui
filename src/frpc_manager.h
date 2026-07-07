@@ -13,6 +13,7 @@ class FrpcManager {
 public:
     using LogCallback = std::function<void(const std::wstring&)>;
     using ExitCallback = std::function<void(DWORD)>;
+    using ProgressCallback = std::function<void(int)>;
 
     FrpcManager();
     ~FrpcManager();
@@ -29,6 +30,7 @@ public:
     bool DownloadFrpc(const FrpVersionInfo& version,
                       const std::wstring& mirrorBase,
                       LogCallback log,
+                      ProgressCallback progress,
                       std::wstring* error);
 
 private:

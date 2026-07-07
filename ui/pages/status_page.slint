@@ -1,0 +1,143 @@
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 40px;
+    min-width: 116px;
+    horizontal-stretch: 0;
+    background: danger ? #dc2626 : (primary ? #16a34a : #ffffff);
+    border-color: danger ? #dc2626 : (primary ? #16a34a : #cfd8e6);
+    border-width: 1px;
+    border-radius: 8px;
+
+    Text {
+        text: root.text;
+        color: (root.primary || root.danger) ? #ffffff : #172033;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 15px;
+        font-weight: 800;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
+component MetricCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> bg: #ffffff;
+    in property <color> border: #dbe3ee;
+    in property <color> value_color: #0f172a;
+    width: 220px;
+    height: 104px;
+    background: bg;
+    border-color: border;
+    border-width: 1px;
+    border-radius: 10px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        Text { text: root.label; color: #64748b; font-size: 14px; font-weight: 700; }
+        Text { text: root.value; font-size: 22px; font-weight: 800; color: root.value_color; }
+    }
+}
+
+export component StatusPage inherits Rectangle {
+    in property <string> status_text;
+    in property <int> service_state;
+    in property <string> selected_version;
+    in property <string> frps_public_ip;
+    in property <int> frps_port;
+    callback start_service();
+    callback stop_service();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 28px;
+        padding-bottom: 24px;
+        spacing: 18px;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: "运行状态"; font-size: 30px; font-weight: 800; color: #0f172a; }
+                Text { text: "启动或停止 frp 代理服务，状态颜色会反映当前运行结果。"; color: #64748b; font-size: 15px; }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: 112px;
+                height: 32px;
+                background: root.service_state == 1 ? #dcfce7 : (root.service_state == 2 ? #fee2e2 : #f1f5f9);
+                border-radius: 16px;
+                Text {
+                    text: root.status_text;
+                    color: root.service_state == 1 ? #166534 : (root.service_state == 2 ? #991b1b : #475569);
+                    font-size: 14px;
+                    font-weight: 800;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 14px;
+            MetricCard {
+                label: "服务状态";
+                value: root.status_text;
+                bg: root.service_state == 1 ? #f0fdf4 : (root.service_state == 2 ? #fef2f2 : #ffffff);
+                border: root.service_state == 1 ? #86efac : (root.service_state == 2 ? #fecaca : #dbe3ee);
+                value_color: root.service_state == 1 ? #166534 : (root.service_state == 2 ? #991b1b : #475569);
+            }
+            MetricCard { label: "当前版本"; value: root.selected_version; }
+            MetricCard {
+                label: "frps";
+                value: (root.frps_public_ip == "" ? "未配置" : root.frps_public_ip) + ":" + root.frps_port;
+            }
+        }
+
+        Rectangle {
+            height: 112px;
+            background: #ffffff;
+            border-color: #dbe3ee;
+            border-width: 1px;
+            border-radius: 10px;
+
+            HorizontalLayout {
+                padding: 18px;
+                spacing: 14px;
+                Text {
+                    text: root.service_state == 1 ? "服务正在运行，可以停止 frpc 子进程。" : "服务未运行，启动前会保存当前 frps 与代理配置。";
+                    color: #475569;
+                    font-size: 15px;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                ActionButton {
+                    text: "启动服务";
+                    primary: root.service_state != 1;
+                    width: 116px;
+                    clicked => { root.start_service(); }
+                }
+                ActionButton {
+                    text: "停止服务";
+                    danger: root.service_state == 1;
+                    width: 116px;
+                    clicked => { root.stop_service(); }
+                }
+            }
+        }
+    }
+}

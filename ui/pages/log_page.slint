@@ -1,0 +1,25 @@
+import { Button, ScrollView } from "std-widgets.slint";
+import { Card } from "../components/card.slint";
+
+export component LogPage inherits Rectangle {
+    in property <string> log_text;
+    callback clear_log();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 14px;
+        alignment: start;
+        Text { text: "日志界面"; font-size: 26px; font-weight: 700; color: #111827; }
+        Button { text: "清空日志"; clicked => { root.clear_log(); } }
+        Card {
+            height: 540px;
+            ScrollView {
+                viewport-width: parent.width;
+                viewport-height: parent.height;
+                Text { text: root.log_text; color: #111827; }
+            }
+        }
+    }
+}

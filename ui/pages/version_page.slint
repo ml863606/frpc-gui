@@ -1,0 +1,361 @@
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Card } from "../components/card.slint";
+
+export struct VersionRow {
+    display_name: string,
+    version: string,
+    archive_name: string,
+    config_path: string,
+    frpc_path: string,
+    published_at: string,
+    installed: bool,
+}
+
+export struct VersionPair {
+    left: VersionRow,
+    right: VersionRow,
+    has_right: bool,
+}
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 40px;
+    min-width: 132px;
+    horizontal-stretch: 0;
+    background: primary ? #1d4ed8 : #f8fafc;
+    border-color: primary ? #1d4ed8 : #d7dee8;
+    border-width: 1px;
+    border-radius: 8px;
+
+    Text {
+        text: root.text;
+        color: root.primary ? #ffffff : #172033;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 15px;
+        font-weight: root.primary ? 700 : 600;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 32px;
+    horizontal-stretch: 0;
+    background: primary ? #2563eb : #ffffff;
+    border-color: primary ? #2563eb : #cfd8e6;
+    border-width: 1px;
+    border-radius: 7px;
+
+    Text {
+        text: root.text;
+        color: root.primary ? #ffffff : #243047;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 700;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
+component InfoPill inherits Rectangle {
+    in property <string> text;
+    in property <color> bg: #edf4ff;
+    in property <color> fg: #1d4ed8;
+    height: 28px;
+    min-width: 92px;
+    background: bg;
+    border-radius: 14px;
+
+    Text {
+        text: root.text;
+        color: root.fg;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 700;
+    }
+}
+
+component ProgressBar inherits Rectangle {
+    in property <int> progress;
+    height: 8px;
+    background: #dbe6f3;
+    border-radius: 4px;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        height: parent.height;
+        width: root.width * root.progress / 100;
+        background: #2563eb;
+        border-radius: 4px;
+    }
+}
+
+component VersionCard inherits Rectangle {
+    in property <VersionRow> item;
+    in property <bool> selected;
+    in property <bool> downloading;
+    in property <int> progress;
+    callback clicked();
+    callback download(string);
+    callback copy_link(string);
+    callback open_folder(string);
+    height: 196px;
+    background: selected ? #eef5ff : #ffffff;
+    border-color: selected ? #3b82f6 : #dbe3ee;
+    border-width: selected ? 2px : 1px;
+    border-radius: 10px;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 16px;
+        padding-bottom: 14px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            Rectangle {
+                width: 42px;
+                height: 42px;
+                background: root.item.installed ? #dcfce7 : #e2e8f0;
+                border-radius: 8px;
+                Text {
+                    text: "frp";
+                    color: root.item.installed ? #166534 : #475569;
+                    font-size: 14px;
+                    font-weight: 800;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                width: 172px;
+                spacing: 4px;
+                Text {
+                    text: root.item.display_name;
+                    color: #0f172a;
+                    font-size: 19px;
+                    font-weight: 800;
+                }
+                Text {
+                    text: root.item.archive_name;
+                    color: #64748b;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.item.published_at == "" ? "发布时间未知" : root.item.published_at;
+                    color: #94a3b8;
+                    font-size: 12px;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            InfoPill {
+                text: root.downloading ? "下载中" : (root.item.installed ? "已下载" : (root.selected ? "当前选中" : "未下载"));
+                bg: root.downloading ? #fef3c7 : (root.item.installed ? #dcfce7 : (root.selected ? #dbeafe : #f1f5f9));
+                fg: root.downloading ? #92400e : (root.item.installed ? #166534 : (root.selected ? #1d4ed8 : #475569));
+            }
+        }
+
+        Rectangle { height: 1px; background: #edf2f7; }
+
+        if root.downloading : HorizontalLayout {
+            spacing: 10px;
+            ProgressBar {
+                progress: root.progress;
+                width: 232px;
+            }
+            Text {
+                text: root.progress + "%";
+                width: 40px;
+                color: #475569;
+                font-size: 12px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            SmallButton {
+                text: root.downloading ? "下载中..." : (root.item.installed ? "重新下载" : "下载");
+                primary: !root.item.installed || root.downloading;
+                width: 82px;
+                clicked => { root.download(root.item.version); }
+            }
+            SmallButton {
+                text: "复制链接";
+                width: 82px;
+                clicked => { root.copy_link(root.item.version); }
+            }
+            if root.item.installed : SmallButton {
+                text: "打开目录";
+                width: 78px;
+                clicked => { root.open_folder(root.item.version); }
+            }
+        }
+    }
+}
+
+export component VersionPage inherits Rectangle {
+    in-out property <string> download_mirror;
+    in-out property <int> download_source_index;
+    in-out property <string> selected_version;
+    in property <[VersionPair]> version_pairs;
+    in property <string> downloading_version;
+    in property <int> download_progress;
+    callback sync_versions();
+    callback download_version(string);
+    callback copy_download_url(string);
+    callback open_version_folder(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 28px;
+        padding-bottom: 24px;
+        spacing: 18px;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: "frp版本管理"; font-size: 30px; font-weight: 800; color: #0f172a; }
+                Text {
+                    text: "按版本独立维护 frpc.exe 与版本 JSON，下载源可切换。";
+                    color: #64748b;
+                    font-size: 15px;
+                    wrap: word-wrap;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            InfoPill { text: "Windows x64"; bg: #eaf1ff; fg: #1d4ed8; }
+        }
+
+        Rectangle {
+            height: 112px;
+            background: #ffffff;
+            border-color: #dbe3ee;
+            border-width: 1px;
+            border-radius: 10px;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    ActionButton { text: "同步GitHub版本"; primary: true; width: 168px; clicked => { root.sync_versions(); } }
+                    Text {
+                        text: "下载源";
+                        color: #334155;
+                        font-size: 14px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                    }
+                    ComboBox {
+                        width: 156px;
+                        height: 40px;
+                        model: ["默认镜像", "直连"];
+                        current-index <=> root.download_source_index;
+                    }
+                    Text {
+                        text: "当前版本：" + root.selected_version;
+                        color: #475569;
+                        font-size: 14px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            Text { text: "版本列表"; font-size: 18px; font-weight: 800; color: #0f172a; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "点击卡片切换当前版本"; color: #64748b; font-size: 14px; vertical-alignment: center; }
+        }
+
+        ScrollView {
+            height: 458px;
+            viewport-width: parent.width;
+            viewport-height: parent.height;
+
+            VerticalLayout {
+                spacing: 14px;
+                alignment: start;
+
+                if root.version_pairs.length == 0 : Card {
+                    height: 126px;
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 10px;
+                        Text { text: "暂无版本配置"; color: #0f172a; font-size: 18px; font-weight: 800; }
+                        Text { text: "点击“同步GitHub版本”后，会写入 versions/frp-versions.json 汇总文件。"; color: #64748b; font-size: 14px; }
+                    }
+                }
+
+                for pair in root.version_pairs : HorizontalLayout {
+                    height: 196px;
+                    spacing: 14px;
+                    VersionCard {
+                        width: 342px;
+                        item: pair.left;
+                        selected: pair.left.version == root.selected_version;
+                        downloading: pair.left.version == root.downloading_version;
+                        progress: pair.left.version == root.downloading_version ? root.download_progress : 0;
+                        clicked => { root.selected_version = pair.left.version; }
+                        download(version) => { root.selected_version = version; root.download_version(version); }
+                        copy_link(version) => { root.copy_download_url(version); }
+                        open_folder(version) => { root.open_version_folder(version); }
+                    }
+                    if pair.has_right : VersionCard {
+                        width: 342px;
+                        item: pair.right;
+                        selected: pair.right.version == root.selected_version;
+                        downloading: pair.right.version == root.downloading_version;
+                        progress: pair.right.version == root.downloading_version ? root.download_progress : 0;
+                        clicked => { root.selected_version = pair.right.version; }
+                        download(version) => { root.selected_version = version; root.download_version(version); }
+                        copy_link(version) => { root.copy_download_url(version); }
+                        open_folder(version) => { root.open_version_folder(version); }
+                    }
+                    if !pair.has_right : Rectangle {
+                        width: 342px;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,11 +1,11 @@
 # frp-desk
 
-极轻量 Windows frp 客户端。界面使用纯 C++ Win32 控件，运行 frp 官方 `frpc.exe` 子进程，不引入 Electron、Tauri、WebView、Qt、MFC 或 .NET。
+极轻量 Windows frp 客户端。界面使用 Slint 1.16 + C++，运行 frp 官方 `frpc.exe` 子进程，不引入 Electron、Tauri、WebView、Qt、MFC 或 .NET。
 
 ## 功能
 
 - 中文 Win32 主窗口
-- 左侧菜单 + 右侧页面布局
+- Slint 左侧菜单 + 右侧页面布局
 - 运行状态页：启动/停止 frp 代理服务
 - 代理设置页：多个 TCP 代理卡片展示，点击“新增代理”弹出新增窗口
 - frp版本管理页：以卡片文本形式列出版本
@@ -75,6 +75,31 @@ https://gh.zwy.one/github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_
 ## 构建
 
 需要 Visual Studio C++ 工具链和 CMake。本机已用 Visual Studio 18 2026 验证通过；如果使用 VS2022，把 generator 改成 `Visual Studio 17 2022`。
+
+项目使用 Slint C++ `1.16.0` 的 Windows MSVC AMD64 预编译包：
+
+```text
+third_party\slint\1.16.0\
+```
+
+构建后会把 `slint_cpp.dll` 复制到输出目录，运行时需要和 `frp-desk.exe` 放在同级。
+
+## UI 模块结构
+
+Slint 页面已按页面级别拆分：
+
+```text
+ui\app.slint
+ui\components\nav_button.slint
+ui\components\card.slint
+ui\pages\status_page.slint
+ui\pages\proxy_page.slint
+ui\pages\version_page.slint
+ui\pages\frps_page.slint
+ui\pages\log_page.slint
+```
+
+`app.slint` 只负责窗口状态、左侧导航和页面组装；各页面独立维护。
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 18 2026" -A x64

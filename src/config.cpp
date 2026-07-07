@@ -332,7 +332,7 @@ bool LoadConfig(AppConfig& config, std::wstring* error) {
 
     if (config.selectedVersion.empty()) config.selectedVersion = L"0.69.1";
     if (config.frpsPort <= 0) config.frpsPort = 7000;
-    if (config.authMethod.empty()) config.authMethod = L"token";
+    if (config.authMethod.empty()) config.authMethod = L"none";
     if (config.downloadMirror.empty()) config.downloadMirror = L"https://gh.zwy.one";
     if (config.proxies.empty()) {
         ProxyConfig legacy;

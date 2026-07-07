@@ -14,7 +14,7 @@ struct AppConfig {
     std::wstring selectedVersion = L"0.69.1";
     std::wstring frpsPublicIP = L"";
     int frpsPort = 7000;
-    std::wstring authMethod = L"token";
+    std::wstring authMethod = L"none";
     std::wstring authToken = L"";
     std::wstring downloadMirror = L"https://gh.zwy.one";
     std::vector<ProxyConfig> proxies = { ProxyConfig{} };
