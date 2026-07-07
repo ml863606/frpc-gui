@@ -1,15 +1,28 @@
 export component NavButton inherits Rectangle {
     in property <bool> active;
     in property <string> text;
+    in property <image> icon;
     callback clicked();
     height: 44px;
     background: active ? #2563eb : #eef2f7;
     border-radius: 8px;
 
+    Image {
+        x: 17px;
+        y: 11px;
+        width: 22px;
+        height: 22px;
+        source: root.icon;
+        colorize: root.active ? #ffffff : #172033;
+    }
+
     Text {
+        x: 50px;
+        width: parent.width - 62px;
+        height: parent.height;
         text: root.text;
         color: root.active ? #ffffff : #172033;
-        horizontal-alignment: center;
+        horizontal-alignment: left;
         vertical-alignment: center;
         font-size: 16px;
     }

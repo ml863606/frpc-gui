@@ -85,7 +85,7 @@ export component StatusPage inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
-                width: 112px;
+                width: 220px;
                 height: 32px;
                 background: root.service_state == 1 ? #dcfce7 : (root.service_state == 2 ? #fee2e2 : #f1f5f9);
                 border-radius: 16px;
@@ -105,9 +105,11 @@ export component StatusPage inherits Rectangle {
             MetricCard {
                 label: "服务状态";
                 value: root.status_text;
+                card_width: 250px;
                 bg: root.service_state == 1 ? #f0fdf4 : (root.service_state == 2 ? #fef2f2 : #ffffff);
                 border: root.service_state == 1 ? #86efac : (root.service_state == 2 ? #fecaca : #dbe3ee);
                 value_color: root.service_state == 1 ? #166534 : (root.service_state == 2 ? #991b1b : #475569);
+                value_font_size: root.service_state == 1 ? 18px : 22px;
             }
             MetricCard { label: "当前版本"; value: root.selected_version; card_width: 160px; }
             MetricCard {

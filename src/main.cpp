@@ -10,14 +10,19 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cwctype>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <ctime>
 #include <vector>
 
 namespace {
@@ -266,6 +271,7 @@ ProxyRow BuildProxyRow(const ProxyConfig& proxy, size_t index) {
     row.local_ip = S(proxy.localIP);
     row.local_port = proxy.localPort;
     row.remote_port = proxy.remotePort;
+    row.enabled = proxy.enabled;
     return row;
 }
 
@@ -346,6 +352,77 @@ std::string BuildLogText(const std::vector<std::string>& logs) {
     return text;
 }
 
+std::string JoinPids(const std::vector<DWORD>& pids) {
+    std::ostringstream stream;
+    for (size_t i = 0; i < pids.size(); ++i) {
+        if (i > 0) {
+            stream << ",";
+        }
+        stream << pids[i];
+    }
+    return stream.str();
+}
+
+std::string CurrentLogTimestamp() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm localTime{};
+    localtime_s(&localTime, &nowTime);
+
+    std::ostringstream stream;
+    stream << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S");
+    return stream.str();
+}
+
+std::wstring LogFilePath(bool frpcLog) {
+    std::filesystem::path path(GetLogsDir());
+    path /= frpcLog ? L"frpc.log" : L"app.log";
+    return path.wstring();
+}
+
+std::vector<std::string> LoadRecentLogLines(bool frpcLog, size_t maxLines = 500) {
+    std::ifstream file(std::filesystem::path(LogFilePath(frpcLog)), std::ios::binary);
+    if (!file) {
+        return {};
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(file, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+        if (lines.size() > maxLines) {
+            lines.erase(lines.begin(), lines.begin() + static_cast<ptrdiff_t>(lines.size() - maxLines));
+        }
+    }
+    return lines;
+}
+
+void AppendLogFile(bool frpcLog, const std::vector<std::string>& lines) {
+    if (lines.empty()) {
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(GetLogsDir()), ec);
+
+    std::ofstream file(std::filesystem::path(LogFilePath(frpcLog)), std::ios::binary | std::ios::app);
+    if (!file) {
+        return;
+    }
+    for (const auto& line : lines) {
+        file << line << "\r\n";
+    }
+}
+
+void ClearLogFile(bool frpcLog) {
+    std::ofstream file(std::filesystem::path(LogFilePath(frpcLog)), std::ios::binary | std::ios::trunc);
+}
+
 using AppHandle = slint::ComponentHandle<AppWindow>;
 
 void RefreshUi(const AppHandle& ui) {
@@ -370,13 +447,25 @@ void RefreshUi(const AppHandle& ui) {
     ui->set_download_progress(g_downloadProgress);
     ui->set_app_log_text(slint::SharedString(BuildLogText(g_appLogs)));
     ui->set_frpc_log_text(slint::SharedString(BuildLogText(g_frpcLogs)));
-    const bool running = g_frpc.IsRunning();
+    std::vector<DWORD> frpcPids;
+    DWORD managedFrpcPid = g_frpc.RunningFrpcPid();
+    if (managedFrpcPid != 0) {
+        frpcPids.push_back(managedFrpcPid);
+    } else {
+        frpcPids = g_frpc.FindExactFrpcPids(CurrentFrpcPath());
+    }
+    const bool running = !frpcPids.empty();
     int serviceState = running ? 1 : (g_serviceFailed ? 2 : 0);
+    std::string statusText = running
+        ? "运行中 PID: " + JoinPids(frpcPids)
+        : (g_serviceFailed ? "启动失败" : "未启动");
     ui->set_service_state(serviceState);
-    ui->set_status_text(slint::SharedString(running ? "运行中" : (g_serviceFailed ? "启动失败" : "未启动")));
+    ui->set_status_text(slint::SharedString(statusText));
 }
 
-void AppendLogLines(std::vector<std::string>& logs, const std::string& utf8) {
+std::vector<std::string> AppendLogLines(std::vector<std::string>& logs, const std::string& utf8) {
+    std::vector<std::string> appended;
+    const std::string timestamp = CurrentLogTimestamp();
     size_t start = 0;
     while (start < utf8.size()) {
         size_t end = utf8.find('\n', start);
@@ -385,15 +474,17 @@ void AppendLogLines(std::vector<std::string>& logs, const std::string& utf8) {
             line.pop_back();
         }
         if (!line.empty()) {
-            logs.push_back(line);
+            appended.push_back(timestamp + " " + line);
         }
         if (end == std::string::npos) break;
         start = end + 1;
     }
-    if (utf8.empty()) logs.emplace_back("");
+    if (utf8.empty()) appended.push_back(timestamp + " ");
+    logs.insert(logs.end(), appended.begin(), appended.end());
     if (logs.size() > 500) {
         logs.erase(logs.begin(), logs.begin() + static_cast<ptrdiff_t>(logs.size() - 500));
     }
+    return appended;
 }
 
 void AddLogTo(std::vector<std::string>& logs,
@@ -404,7 +495,8 @@ void AddLogTo(std::vector<std::string>& logs,
     std::string snapshot;
     {
         std::lock_guard<std::mutex> lock(g_stateMutex);
-        AppendLogLines(logs, utf8);
+        std::vector<std::string> appended = AppendLogLines(logs, utf8);
+        AppendLogFile(frpcLog, appended);
         snapshot = BuildLogText(logs);
     }
 
@@ -588,7 +680,7 @@ void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWind
                 if (!ok) {
                     MessageBoxW(nullptr, (L"下载 frpc 失败。\n\n" + error).c_str(), L"下载失败", MB_ICONWARNING);
                 } else {
-                    MessageBoxW(nullptr, L"frpc.exe 下载完成。", L"frp-desk", MB_ICONINFORMATION);
+                    MessageBoxW(nullptr, L"frpc.exe 下载完成。", L"frpc-gui", MB_ICONINFORMATION);
                 }
                 {
                     std::lock_guard<std::mutex> lock(g_stateMutex);
@@ -619,7 +711,7 @@ void StartRefreshVersions(const AppHandle& ui, const slint::ComponentWeakHandle<
                         const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
                         if (current) g_config.selectedVersion = current->version;
                     }
-                    MessageBoxW(nullptr, L"GitHub frp 版本同步完成。", L"frp-desk", MB_ICONINFORMATION);
+                    MessageBoxW(nullptr, L"GitHub frp 版本同步完成。", L"frpc-gui", MB_ICONINFORMATION);
                 } else {
                     MessageBoxW(nullptr, (L"同步 GitHub 版本失败。\n\n" + error).c_str(), L"同步失败", MB_ICONWARNING);
                 }
@@ -696,6 +788,171 @@ void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<A
     }).detach();
 }
 
+void ToggleProxyEnabled(const AppHandle& ui,
+                        const slint::ComponentWeakHandle<AppWindow>& weak,
+                        int index) {
+    std::wstring logLine;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        size_t pos = index > 0 ? static_cast<size_t>(index - 1) : g_config.proxies.size();
+        if (pos >= g_config.proxies.size()) {
+            MessageBoxW(nullptr, L"代理不存在，可能已经被删除。", L"切换失败", MB_ICONWARNING);
+            return;
+        }
+
+        ProxyConfig& proxy = g_config.proxies[pos];
+        proxy.enabled = !proxy.enabled;
+        logLine = std::wstring(proxy.enabled ? L"启用代理: " : L"停用代理: ") + proxy.name;
+        SaveConfig(g_config, nullptr);
+        WriteFrpcToml(g_config, nullptr);
+    }
+    AddAppLog(logLine, weak);
+    RefreshUi(ui);
+}
+
+void RunProxyPortTest(const slint::ComponentWeakHandle<AppWindow>& weak,
+                      const ProxyConfig& proxy,
+                      const std::wstring& remoteHost) {
+    AddAppLog(L"开始测试代理端口: " + proxy.name, weak);
+    std::thread([weak, proxy, remoteHost]() {
+        std::wstring localError;
+        std::wstring remoteError;
+        bool localOk = TestTcpConnection(proxy.localIP, proxy.localPort, 3000, &localError);
+        bool remoteOk = TestTcpConnection(remoteHost, proxy.remotePort, 3000, &remoteError);
+
+        slint::invoke_from_event_loop([weak, proxy, remoteHost, localOk, remoteOk,
+                                       localError, remoteError] {
+            std::wstring localEndpoint = proxy.localIP + L":" + std::to_wstring(proxy.localPort);
+            std::wstring remoteEndpoint = remoteHost + L":" + std::to_wstring(proxy.remotePort);
+            std::wstring message = (localOk && remoteOk) ? L"端口测试通过。\n\n" : L"端口测试未通过。\n\n";
+            message += localOk ? L"本地端口可连接: " + localEndpoint
+                               : L"本地端口连接失败: " + localEndpoint + L" - " + localError;
+            message += L"\n";
+            message += remoteOk ? L"远端端口可连接: " + remoteEndpoint
+                                : L"远端端口连接失败: " + remoteEndpoint + L" - " + remoteError;
+
+            AddAppLog((localOk ? L"本地端口测试成功: " : L"本地端口测试失败: ") +
+                          localEndpoint + (localOk ? L"" : L" - " + localError),
+                      weak);
+            AddAppLog((remoteOk ? L"远端端口测试成功: " : L"远端端口测试失败: ") +
+                          remoteEndpoint + (remoteOk ? L"" : L" - " + remoteError),
+                      weak);
+            MessageBoxW(nullptr, message.c_str(), L"代理端口测试",
+                        (localOk && remoteOk) ? MB_ICONINFORMATION : MB_ICONWARNING);
+        });
+    }).detach();
+}
+
+void SetProxyInputTestState(const AppHandle& ui, int mode, int localState, int remoteState) {
+    if (mode == 0) {
+        ui->set_add_proxy_local_test_state(localState);
+        ui->set_add_proxy_remote_test_state(remoteState);
+    } else {
+        ui->set_edit_proxy_local_test_state(localState);
+        ui->set_edit_proxy_remote_test_state(remoteState);
+    }
+}
+
+void SetProxyInputTestState(const slint::ComponentWeakHandle<AppWindow>& weak,
+                            int mode,
+                            int localState,
+                            int remoteState) {
+    if (auto ui = weak.lock()) {
+        SetProxyInputTestState(*ui, mode, localState, remoteState);
+    }
+}
+
+void StartProxyPortTest(const AppHandle& ui,
+                        const slint::ComponentWeakHandle<AppWindow>& weak,
+                        int index) {
+    ReadUiToConfig(ui);
+
+    ProxyConfig proxy;
+    std::wstring remoteHost;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        size_t pos = index > 0 ? static_cast<size_t>(index - 1) : g_config.proxies.size();
+        if (pos >= g_config.proxies.size()) {
+            MessageBoxW(nullptr, L"代理不存在，可能已经被删除。", L"测试失败", MB_ICONWARNING);
+            return;
+        }
+        proxy = g_config.proxies[pos];
+        remoteHost = g_config.frpsPublicIP;
+    }
+
+    if (remoteHost.empty()) {
+        MessageBoxW(nullptr, L"请先在 frps 设置中填写公网 IP 或域名。", L"测试失败", MB_ICONWARNING);
+        return;
+    }
+
+    RunProxyPortTest(weak, proxy, remoteHost);
+}
+
+void StartProxyInputPortTest(const AppHandle& ui,
+                             const slint::ComponentWeakHandle<AppWindow>& weak,
+                             int mode,
+                             slint::SharedString localIp,
+                             slint::SharedString localPortText,
+                             slint::SharedString remotePortText) {
+    ReadUiToConfig(ui);
+
+    ProxyConfig proxy;
+    proxy.name = L"当前输入";
+    proxy.localIP = W(localIp);
+    const bool localPortValid = TryParsePort(W(localPortText), proxy.localPort);
+    const bool remotePortValid = TryParsePort(W(remotePortText), proxy.remotePort);
+
+    std::wstring remoteHost;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        remoteHost = g_config.frpsPublicIP;
+    }
+
+    const bool canTestLocal = !proxy.localIP.empty() && localPortValid;
+    const bool canTestRemote = !remoteHost.empty() && remotePortValid;
+    if (!canTestLocal || !canTestRemote) {
+        SetProxyInputTestState(ui, mode, canTestLocal ? 1 : 3, canTestRemote ? 1 : 3);
+        if (!canTestLocal && !canTestRemote) {
+            AddAppLog(L"代理端口测试失败: 输入不完整或端口无效", weak);
+            return;
+        }
+    }
+
+    AddAppLog(L"开始测试代理端口: " + proxy.name, weak);
+    std::thread([weak, mode, proxy, remoteHost, canTestLocal, canTestRemote]() {
+        std::wstring localError;
+        std::wstring remoteError;
+        bool localOk = false;
+        bool remoteOk = false;
+        if (canTestLocal) {
+            localOk = TestTcpConnection(proxy.localIP, proxy.localPort, 3000, &localError);
+        }
+        if (canTestRemote) {
+            remoteOk = TestTcpConnection(remoteHost, proxy.remotePort, 3000, &remoteError);
+        }
+
+        slint::invoke_from_event_loop([weak, mode, proxy, remoteHost, canTestLocal, canTestRemote,
+                                       localOk, remoteOk, localError, remoteError] {
+            std::wstring localEndpoint = proxy.localIP + L":" + std::to_wstring(proxy.localPort);
+            std::wstring remoteEndpoint = remoteHost + L":" + std::to_wstring(proxy.remotePort);
+            int localState = canTestLocal ? (localOk ? 2 : 3) : 3;
+            int remoteState = canTestRemote ? (remoteOk ? 2 : 3) : 3;
+
+            if (canTestLocal) {
+                AddAppLog((localOk ? L"本地端口测试成功: " : L"本地端口测试失败: ") +
+                              localEndpoint + (localOk ? L"" : L" - " + localError),
+                          weak);
+            }
+            if (canTestRemote) {
+                AddAppLog((remoteOk ? L"远端端口测试成功: " : L"远端端口测试失败: ") +
+                              remoteEndpoint + (remoteOk ? L"" : L" - " + remoteError),
+                          weak);
+            }
+            SetProxyInputTestState(weak, mode, localState, remoteState);
+        });
+    }).detach();
+}
+
 void CopyDownloadUrl(const AppHandle& ui, const slint::SharedString& versionText) {
     ReadUiToConfig(ui);
     std::wstring version = W(versionText);
@@ -713,7 +970,7 @@ void CopyDownloadUrl(const AppHandle& ui, const slint::SharedString& versionText
         MessageBoxW(nullptr, L"写入剪贴板失败。", L"复制失败", MB_ICONWARNING);
         return;
     }
-    MessageBoxW(nullptr, L"下载链接已复制到剪贴板。", L"frp-desk", MB_ICONINFORMATION);
+    MessageBoxW(nullptr, L"下载链接已复制到剪贴板。", L"frpc-gui", MB_ICONINFORMATION);
 }
 
 void OpenVersionFolder(const slint::SharedString& versionText) {
@@ -727,7 +984,7 @@ void OpenVersionFolder(const slint::SharedString& versionText) {
     HINSTANCE result = ShellExecuteW(nullptr, L"open", folder.wstring().c_str(),
                                      nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<intptr_t>(result) <= 32) {
-        MessageBoxW(nullptr, L"打开本地目录失败。", L"frp-desk", MB_ICONWARNING);
+        MessageBoxW(nullptr, L"打开本地目录失败。", L"frpc-gui", MB_ICONWARNING);
     }
 }
 
@@ -739,17 +996,21 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     EnsureDefaultVersionFiles(&error);
     LoadConfig(g_config, &error);
     LoadVersions();
+    g_appLogs = LoadRecentLogLines(false);
+    g_frpcLogs = LoadRecentLogLines(true);
 
     auto ui = AppWindow::create();
     slint::ComponentWeakHandle<AppWindow> weak(ui);
 
     AddAppLog(L"运行目录: " + GetAppDataDir(), weak);
+    AddAppLog(L"日志目录: " + GetLogsDir(), weak);
     RefreshUi(ui);
 
     ui->on_start_service([ui, weak] { StartFrpc(ui, weak); });
     ui->on_stop_service([ui, weak] {
         AddAppLog(L"停止 frpc 服务", weak);
         g_frpc.Stop();
+        g_frpc.StopExactFrpc(CurrentFrpcPath());
         {
             std::lock_guard<std::mutex> lock(g_stateMutex);
             g_serviceFailed = false;
@@ -758,7 +1019,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     });
     ui->on_save_frps([ui] {
         if (SaveCurrentConfig(ui, false)) {
-            MessageBoxW(nullptr, L"配置已保存。", L"frp-desk", MB_ICONINFORMATION);
+            MessageBoxW(nullptr, L"配置已保存。", L"frpc-gui", MB_ICONINFORMATION);
         }
     });
     ui->on_test_frps_connection([ui, weak] { StartConnectionTest(ui, weak); });
@@ -773,15 +1034,17 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     ui->on_open_version_folder([](slint::SharedString version) {
         OpenVersionFolder(version);
     });
-    ui->on_clear_app_log([ui] {
+    ui->on_clear_current_log([ui](int tab) {
         std::lock_guard<std::mutex> lock(g_stateMutex);
-        g_appLogs.clear();
-        ui->set_app_log_text("");
-    });
-    ui->on_clear_frpc_log([ui] {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
-        g_frpcLogs.clear();
-        ui->set_frpc_log_text("");
+        if (tab == 0) {
+            g_appLogs.clear();
+            ClearLogFile(false);
+            ui->set_app_log_text("");
+        } else {
+            g_frpcLogs.clear();
+            ClearLogFile(true);
+            ui->set_frpc_log_text("");
+        }
     });
     ui->on_add_proxy([ui](int typeIndex, slint::SharedString name, slint::SharedString localIp,
                           slint::SharedString localPortText, slint::SharedString remotePortText) {
@@ -834,14 +1097,27 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
                 MessageBoxW(nullptr, L"代理不存在，可能已经被删除。", L"编辑失败", MB_ICONWARNING);
                 return;
             }
+            proxy.enabled = g_config.proxies[pos].enabled;
             g_config.proxies[pos] = proxy;
             SaveConfig(g_config, nullptr);
             WriteFrpcToml(g_config, nullptr);
         }
         RefreshUi(ui);
     });
+    ui->on_toggle_proxy([ui, weak](int index) {
+        ToggleProxyEnabled(ui, weak, index);
+    });
+    ui->on_test_proxy([ui, weak](int index) {
+        StartProxyPortTest(ui, weak, index);
+    });
+    ui->on_test_proxy_input([ui, weak](int mode,
+                                       slint::SharedString localIp,
+                                       slint::SharedString localPortText,
+                                       slint::SharedString remotePortText) {
+        StartProxyInputPortTest(ui, weak, mode, localIp, localPortText, remotePortText);
+    });
     ui->on_delete_proxy([ui](int index) {
-        if (MessageBoxW(nullptr, L"确定删除这个 TCP 代理吗？", L"删除代理",
+        if (MessageBoxW(nullptr, L"确定删除这个代理吗？", L"删除代理",
                         MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES) {
             return;
         }

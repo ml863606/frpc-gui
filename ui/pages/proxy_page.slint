@@ -1,4 +1,4 @@
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export struct ProxyRow {
     index: int,
@@ -8,6 +8,7 @@ export struct ProxyRow {
     local_ip: string,
     local_port: int,
     remote_port: int,
+    enabled: bool,
 }
 
 export struct ProxyPair {
@@ -79,6 +80,64 @@ component InfoPill inherits Rectangle {
         vertical-alignment: center;
         font-size: 13px;
         font-weight: 700;
+    }
+}
+
+component TestMark inherits Rectangle {
+    in property <int> state;
+    width: 30px;
+    height: 38px;
+    background: transparent;
+
+    if root.state == 1 : Text {
+        text: "...";
+        color: #2563eb;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 900;
+    }
+
+    if root.state == 2 : Image {
+        x: 3px;
+        y: 7px;
+        width: 24px;
+        height: 24px;
+        source: @image-url("../../resources/icons/check.svg");
+    }
+
+    if root.state == 3 : Image {
+        x: 3px;
+        y: 7px;
+        width: 24px;
+        height: 24px;
+        source: @image-url("../../resources/icons/x.svg");
+    }
+}
+
+component TypeOption inherits Rectangle {
+    in-out property <int> selected_index;
+    in property <int> option_index;
+    in property <string> label;
+    height: 34px;
+    background: root.selected_index == root.option_index ? #2563eb : transparent;
+    border-radius: 7px;
+
+    Text {
+        text: root.label;
+        color: root.selected_index == root.option_index ? #ffffff : #334155;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.selected_index = root.option_index;
+        }
     }
 }
 
@@ -156,9 +215,11 @@ component ProxyCard inherits Rectangle {
     in property <ProxyRow> item;
     callback edit(int);
     callback remove(int);
-    height: 202px;
-    background: #ffffff;
-    border-color: #dbe3ee;
+    callback toggle(int);
+    callback test(int);
+    height: 214px;
+    background: root.item.enabled ? #ffffff : #f8fafc;
+    border-color: root.item.enabled ? #dbe3ee : #cbd5e1;
     border-width: 1px;
     border-radius: 10px;
 
@@ -195,7 +256,11 @@ component ProxyCard inherits Rectangle {
             }
 
             Rectangle { horizontal-stretch: 1; }
-            InfoPill { text: "启用"; bg: #dcfce7; fg: #166534; }
+            InfoPill {
+                text: root.item.enabled ? "已启用" : "已停用";
+                bg: root.item.enabled ? #dcfce7 : #e2e8f0;
+                fg: root.item.enabled ? #166534 : #475569;
+            }
         }
 
         Rectangle { height: 1px; background: #edf2f7; }
@@ -212,8 +277,10 @@ component ProxyCard inherits Rectangle {
         HorizontalLayout {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; }
-            SmallButton { text: "编辑"; width: 64px; clicked => { root.edit(root.item.index); } }
-            SmallButton { text: "删除"; danger: true; width: 64px; clicked => { root.remove(root.item.index); } }
+            SmallButton { text: root.item.enabled ? "停用" : "启用"; danger: root.item.enabled; width: 58px; clicked => { root.toggle(root.item.index); } }
+            SmallButton { text: "测试"; width: 54px; clicked => { root.test(root.item.index); } }
+            SmallButton { text: "编辑"; width: 54px; clicked => { root.edit(root.item.index); } }
+            SmallButton { text: "删除"; danger: true; width: 54px; clicked => { root.remove(root.item.index); } }
         }
     }
 }
@@ -226,8 +293,11 @@ component ProxyForm inherits Rectangle {
     in-out property <string> local_ip;
     in-out property <string> local_port_text;
     in-out property <string> remote_port_text;
+    in property <int> local_test_state;
+    in property <int> remote_test_state;
     callback cancel();
     callback save();
+    callback test();
 
     width: 430px;
     height: 454px;
@@ -252,13 +322,16 @@ component ProxyForm inherits Rectangle {
             FormLabel { text: "代理类型"; }
             InputShell {
                 width: 386px;
-                ComboBox {
-                    x: 1px;
-                    y: 1px;
-                    width: parent.width - 2px;
-                    height: parent.height - 2px;
-                    model: ["TCP", "UDP", "HTTP", "HTTPS"];
-                    current-index <=> root.type_index;
+                HorizontalLayout {
+                    x: 3px;
+                    y: 3px;
+                    width: parent.width - 6px;
+                    height: parent.height - 6px;
+                    spacing: 4px;
+                    TypeOption { width: 91px; selected_index <=> root.type_index; option_index: 0; label: "TCP"; }
+                    TypeOption { width: 91px; selected_index <=> root.type_index; option_index: 1; label: "UDP"; }
+                    TypeOption { width: 91px; selected_index <=> root.type_index; option_index: 2; label: "HTTP"; }
+                    TypeOption { width: 91px; selected_index <=> root.type_index; option_index: 3; label: "HTTPS"; }
                 }
             }
         }
@@ -276,16 +349,27 @@ component ProxyForm inherits Rectangle {
         }
 
         HorizontalLayout {
-            spacing: 14px;
+            width: 386px;
+            spacing: 18px;
             VerticalLayout {
+                width: 184px;
                 spacing: 6px;
                 FormLabel { text: "本地端口"; }
-                StyledTextField { text <=> root.local_port_text; placeholder: "8080"; width: 186px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    StyledTextField { text <=> root.local_port_text; placeholder: "8080"; width: 78px; }
+                    TestMark { state: root.local_test_state; }
+                }
             }
             VerticalLayout {
+                width: 184px;
                 spacing: 6px;
                 FormLabel { text: "远端端口"; }
-                StyledTextField { text <=> root.remote_port_text; placeholder: "6000"; width: 186px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    StyledTextField { text <=> root.remote_port_text; placeholder: "6000"; width: 78px; }
+                    TestMark { state: root.remote_test_state; }
+                }
             }
         }
 
@@ -295,6 +379,7 @@ component ProxyForm inherits Rectangle {
             spacing: 10px;
             Rectangle { horizontal-stretch: 1; }
             ActionButton { text: "取消"; width: 96px; clicked => { root.cancel(); } }
+            ActionButton { text: "测试"; width: 96px; clicked => { root.test(); } }
             ActionButton { text: "保存"; primary: true; width: 104px; clicked => { root.save(); } }
         }
     }
@@ -309,6 +394,8 @@ export component ProxyPage inherits Rectangle {
     in-out property <string> add_proxy_local_ip;
     in-out property <string> add_proxy_local_port_text;
     in-out property <string> add_proxy_remote_port_text;
+    in-out property <int> add_proxy_local_test_state;
+    in-out property <int> add_proxy_remote_test_state;
     in-out property <bool> show_edit_proxy;
     in-out property <int> edit_proxy_index;
     in-out property <int> edit_proxy_type_index;
@@ -316,9 +403,14 @@ export component ProxyPage inherits Rectangle {
     in-out property <string> edit_proxy_local_ip;
     in-out property <string> edit_proxy_local_port_text;
     in-out property <string> edit_proxy_remote_port_text;
+    in-out property <int> edit_proxy_local_test_state;
+    in-out property <int> edit_proxy_remote_test_state;
     callback add_proxy(int, string, string, string, string);
     callback edit_proxy(int, int, string, string, string, string);
     callback delete_proxy(int);
+    callback toggle_proxy(int);
+    callback test_proxy(int);
+    callback test_proxy_input(int, string, string, string);
 
     background: transparent;
 
@@ -348,6 +440,8 @@ export component ProxyPage inherits Rectangle {
                     root.add_proxy_local_ip = "127.0.0.1";
                     root.add_proxy_local_port_text = "8080";
                     root.add_proxy_remote_port_text = "6000";
+                    root.add_proxy_local_test_state = 0;
+                    root.add_proxy_remote_test_state = 0;
                     root.show_add_proxy = true;
                 }
             }
@@ -383,7 +477,7 @@ export component ProxyPage inherits Rectangle {
                 }
 
                 for pair in root.proxy_pairs : HorizontalLayout {
-                    height: 202px;
+                    height: 214px;
                     spacing: 14px;
                     ProxyCard {
                         width: 342px;
@@ -395,9 +489,13 @@ export component ProxyPage inherits Rectangle {
                             root.edit_proxy_local_ip = pair.left.local_ip;
                             root.edit_proxy_local_port_text = "" + pair.left.local_port;
                             root.edit_proxy_remote_port_text = "" + pair.left.remote_port;
+                            root.edit_proxy_local_test_state = 0;
+                            root.edit_proxy_remote_test_state = 0;
                             root.show_edit_proxy = true;
                         }
                         remove(index) => { root.delete_proxy(index); }
+                        toggle(index) => { root.toggle_proxy(index); }
+                        test(index) => { root.test_proxy(index); }
                     }
                     if pair.has_right : ProxyCard {
                         width: 342px;
@@ -409,9 +507,13 @@ export component ProxyPage inherits Rectangle {
                             root.edit_proxy_local_ip = pair.right.local_ip;
                             root.edit_proxy_local_port_text = "" + pair.right.local_port;
                             root.edit_proxy_remote_port_text = "" + pair.right.remote_port;
+                            root.edit_proxy_local_test_state = 0;
+                            root.edit_proxy_remote_test_state = 0;
                             root.show_edit_proxy = true;
                         }
                         remove(index) => { root.delete_proxy(index); }
+                        toggle(index) => { root.toggle_proxy(index); }
+                        test(index) => { root.test_proxy(index); }
                     }
                     if !pair.has_right : Rectangle { width: 342px; }
                 }
@@ -433,7 +535,14 @@ export component ProxyPage inherits Rectangle {
             local_ip <=> root.add_proxy_local_ip;
             local_port_text <=> root.add_proxy_local_port_text;
             remote_port_text <=> root.add_proxy_remote_port_text;
+            local_test_state: root.add_proxy_local_test_state;
+            remote_test_state: root.add_proxy_remote_test_state;
             cancel => { root.show_add_proxy = false; }
+            test => {
+                root.add_proxy_local_test_state = 1;
+                root.add_proxy_remote_test_state = 1;
+                root.test_proxy_input(0, root.add_proxy_local_ip, root.add_proxy_local_port_text, root.add_proxy_remote_port_text);
+            }
             save => {
                 root.add_proxy(root.add_proxy_type_index, root.add_proxy_name, root.add_proxy_local_ip, root.add_proxy_local_port_text, root.add_proxy_remote_port_text);
                 root.show_add_proxy = false;
@@ -455,7 +564,14 @@ export component ProxyPage inherits Rectangle {
             local_ip <=> root.edit_proxy_local_ip;
             local_port_text <=> root.edit_proxy_local_port_text;
             remote_port_text <=> root.edit_proxy_remote_port_text;
+            local_test_state: root.edit_proxy_local_test_state;
+            remote_test_state: root.edit_proxy_remote_test_state;
             cancel => { root.show_edit_proxy = false; }
+            test => {
+                root.edit_proxy_local_test_state = 1;
+                root.edit_proxy_remote_test_state = 1;
+                root.test_proxy_input(1, root.edit_proxy_local_ip, root.edit_proxy_local_port_text, root.edit_proxy_remote_port_text);
+            }
             save => {
                 root.edit_proxy(root.edit_proxy_index, root.edit_proxy_type_index, root.edit_proxy_name, root.edit_proxy_local_ip, root.edit_proxy_local_port_text, root.edit_proxy_remote_port_text);
                 root.show_edit_proxy = false;

@@ -1,4 +1,4 @@
-#include "version_manager.h"
+﻿#include "version_manager.h"
 
 #include "config.h"
 
@@ -128,7 +128,7 @@ bool HttpGetUtf8(const std::wstring& url, std::string& body, std::wstring* error
         return false;
     }
 
-    HINTERNET session = WinHttpOpen(L"frp-desk/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    HINTERNET session = WinHttpOpen(L"frpc-gui/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         if (error) *error = L"初始化 WinHTTP 失败: " + LastErrorText();
@@ -155,7 +155,7 @@ bool HttpGetUtf8(const std::wstring& url, std::string& body, std::wstring* error
     }
 
     const wchar_t headers[] =
-        L"User-Agent: frp-desk\r\n"
+        L"User-Agent: frpc-gui\r\n"
         L"Accept: application/vnd.github+json\r\n"
         L"X-GitHub-Api-Version: 2022-11-28\r\n";
     BOOL sent = WinHttpSendRequest(request, headers, static_cast<DWORD>(wcslen(headers)),

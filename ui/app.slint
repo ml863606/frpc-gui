@@ -6,7 +6,7 @@ import { FrpsPage } from "pages/frps_page.slint";
 import { LogPage } from "pages/log_page.slint";
 
 export component AppWindow inherits Window {
-    title: "frp-desk";
+    title: "frpc-gui";
     width: 1040px;
     height: 720px;
     background: #f4f7fb;
@@ -43,6 +43,8 @@ export component AppWindow inherits Window {
     in-out property <int> add_proxy_remote_port: 6000;
     in-out property <string> add_proxy_local_port_text: "8080";
     in-out property <string> add_proxy_remote_port_text: "6000";
+    in-out property <int> add_proxy_local_test_state: 0;
+    in-out property <int> add_proxy_remote_test_state: 0;
     in-out property <bool> show_edit_proxy: false;
     in-out property <int> edit_proxy_index: 0;
     in-out property <int> edit_proxy_type_index: 0;
@@ -52,6 +54,8 @@ export component AppWindow inherits Window {
     in-out property <int> edit_proxy_remote_port: 6000;
     in-out property <string> edit_proxy_local_port_text: "8080";
     in-out property <string> edit_proxy_remote_port_text: "6000";
+    in-out property <int> edit_proxy_local_test_state: 0;
+    in-out property <int> edit_proxy_remote_test_state: 0;
     in-out property <int> service_state: 0;
 
     callback start_service();
@@ -66,6 +70,9 @@ export component AppWindow inherits Window {
     callback add_proxy(int, string, string, string, string);
     callback edit_proxy(int, int, string, string, string, string);
     callback delete_proxy(int);
+    callback toggle_proxy(int);
+    callback test_proxy(int);
+    callback test_proxy_input(int, string, string, string);
     callback clear_current_log(int);
 
     Rectangle {
@@ -82,17 +89,25 @@ export component AppWindow inherits Window {
             border-color: #e2e8f0;
             border-width: 1px;
 
+            Image {
+                x: 26px;
+                y: 26px;
+                width: 36px;
+                height: 36px;
+                source: @image-url("../resources/logo/frpc-gui.svg");
+            }
+
             Text {
-                x: 28px;
+                x: 72px;
                 y: 30px;
-                text: "frp-desk";
+                text: "frpc-gui";
                 font-size: 27px;
                 font-weight: 800;
                 color: #0f172a;
             }
 
             Text {
-                x: 28px;
+                x: 72px;
                 y: 68px;
                 text: "轻量 frp 客户端";
                 color: #64748b;
@@ -107,11 +122,11 @@ export component AppWindow inherits Window {
                 background: #e2e8f0;
             }
 
-            NavButton { x: 22px; y: 130px; width: 200px; text: "运行状态"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
-            NavButton { x: 22px; y: 184px; width: 200px; text: "代理设置"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
-            NavButton { x: 22px; y: 238px; width: 200px; text: "frp版本管理"; active: root.current_page == 2; clicked => { root.current_page = 2; } }
-            NavButton { x: 22px; y: 292px; width: 200px; text: "frps设置"; active: root.current_page == 3; clicked => { root.current_page = 3; } }
-            NavButton { x: 22px; y: 346px; width: 200px; text: "日志界面"; active: root.current_page == 4; clicked => { root.current_page = 4; } }
+            NavButton { x: 22px; y: 130px; width: 200px; icon: @image-url("../resources/icons/status.svg"); text: "运行状态"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
+            NavButton { x: 22px; y: 184px; width: 200px; icon: @image-url("../resources/icons/proxy.svg"); text: "代理设置"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
+            NavButton { x: 22px; y: 238px; width: 200px; icon: @image-url("../resources/icons/versions.svg"); text: "frp版本管理"; active: root.current_page == 2; clicked => { root.current_page = 2; } }
+            NavButton { x: 22px; y: 292px; width: 200px; icon: @image-url("../resources/icons/server.svg"); text: "frps设置"; active: root.current_page == 3; clicked => { root.current_page = 3; } }
+            NavButton { x: 22px; y: 346px; width: 200px; icon: @image-url("../resources/icons/logs.svg"); text: "日志界面"; active: root.current_page == 4; clicked => { root.current_page = 4; } }
 
             Text {
                 x: 28px;
@@ -152,6 +167,8 @@ export component AppWindow inherits Window {
                 add_proxy_local_ip <=> root.add_proxy_local_ip;
                 add_proxy_local_port_text <=> root.add_proxy_local_port_text;
                 add_proxy_remote_port_text <=> root.add_proxy_remote_port_text;
+                add_proxy_local_test_state <=> root.add_proxy_local_test_state;
+                add_proxy_remote_test_state <=> root.add_proxy_remote_test_state;
                 show_edit_proxy <=> root.show_edit_proxy;
                 edit_proxy_index <=> root.edit_proxy_index;
                 edit_proxy_type_index <=> root.edit_proxy_type_index;
@@ -159,6 +176,8 @@ export component AppWindow inherits Window {
                 edit_proxy_local_ip <=> root.edit_proxy_local_ip;
                 edit_proxy_local_port_text <=> root.edit_proxy_local_port_text;
                 edit_proxy_remote_port_text <=> root.edit_proxy_remote_port_text;
+                edit_proxy_local_test_state <=> root.edit_proxy_local_test_state;
+                edit_proxy_remote_test_state <=> root.edit_proxy_remote_test_state;
                 add_proxy(type_index, name, local_ip, local_port, remote_port) => {
                     root.add_proxy(type_index, name, local_ip, local_port, remote_port);
                 }
@@ -167,6 +186,15 @@ export component AppWindow inherits Window {
                 }
                 delete_proxy(index) => {
                     root.delete_proxy(index);
+                }
+                toggle_proxy(index) => {
+                    root.toggle_proxy(index);
+                }
+                test_proxy(index) => {
+                    root.test_proxy(index);
+                }
+                test_proxy_input(mode, local_ip, local_port, remote_port) => {
+                    root.test_proxy_input(mode, local_ip, local_port, remote_port);
                 }
             }
 

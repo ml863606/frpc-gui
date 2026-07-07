@@ -147,6 +147,36 @@ bool FindJsonInt(const std::wstring& json, const std::wstring& key, int& value) 
     return true;
 }
 
+bool FindJsonBool(const std::wstring& json, const std::wstring& key, bool& value) {
+    const std::wstring marker = L"\"" + key + L"\"";
+    size_t pos = json.find(marker);
+    if (pos == std::wstring::npos) {
+        return false;
+    }
+    pos = json.find(L':', pos + marker.size());
+    if (pos == std::wstring::npos) {
+        return false;
+    }
+    ++pos;
+    while (pos < json.size() && iswspace(json[pos])) {
+        ++pos;
+    }
+    if (json.compare(pos, 4, L"true") == 0) {
+        value = true;
+        return true;
+    }
+    if (json.compare(pos, 5, L"false") == 0) {
+        value = false;
+        return true;
+    }
+    int intValue = 0;
+    if (FindJsonInt(json, key, intValue)) {
+        value = intValue != 0;
+        return true;
+    }
+    return false;
+}
+
 std::vector<std::wstring> ExtractJsonObjectsFromArray(const std::wstring& json,
                                                       const std::wstring& key) {
     std::vector<std::wstring> objects;
@@ -223,6 +253,7 @@ std::vector<ProxyConfig> ParseProxies(const std::wstring& json) {
         FindJsonString(object, L"localIP", proxy.localIP);
         FindJsonInt(object, L"localPort", proxy.localPort);
         FindJsonInt(object, L"remotePort", proxy.remotePort);
+        FindJsonBool(object, L"enabled", proxy.enabled);
         if (proxy.name.empty()) proxy.name = L"tcp" + std::to_wstring(proxies.size() + 1);
         proxy.type = NormalizeProxyType(proxy.type);
         if (proxy.localIP.empty()) proxy.localIP = L"127.0.0.1";
@@ -285,6 +316,10 @@ std::wstring GetDownloadsDir() {
     return JoinPath(GetAppDataDir(), L"downloads");
 }
 
+std::wstring GetLogsDir() {
+    return JoinPath(GetAppDataDir(), L"logs");
+}
+
 std::wstring GetFrpcPath() {
     return GetFrpcPathForVersion(L"0.69.1");
 }
@@ -305,6 +340,7 @@ bool EnsureAppDirectories(std::wstring* error) {
     try {
         std::filesystem::create_directories(GetBinDir());
         std::filesystem::create_directories(GetDownloadsDir());
+        std::filesystem::create_directories(GetLogsDir());
         return true;
     } catch (const std::exception& ex) {
         if (error) {
@@ -354,6 +390,7 @@ bool LoadConfig(AppConfig& config, std::wstring* error) {
         FindJsonString(json, L"localIP", legacy.localIP);
         FindJsonInt(json, L"localPort", legacy.localPort);
         FindJsonInt(json, L"remotePort", legacy.remotePort);
+        FindJsonBool(json, L"proxyEnabled", legacy.enabled);
         if (legacy.name.empty()) legacy.name = L"tcp1";
         legacy.type = NormalizeProxyType(legacy.type);
         if (legacy.localIP.empty()) legacy.localIP = L"127.0.0.1";
@@ -382,7 +419,8 @@ bool SaveConfig(const AppConfig& config, std::wstring* error) {
              << L"      \"type\": \"" << EscapeJson(NormalizeProxyType(proxy.type)) << L"\",\n"
              << L"      \"localIP\": \"" << EscapeJson(proxy.localIP) << L"\",\n"
              << L"      \"localPort\": " << proxy.localPort << L",\n"
-             << L"      \"remotePort\": " << proxy.remotePort << L"\n"
+             << L"      \"remotePort\": " << proxy.remotePort << L",\n"
+             << L"      \"enabled\": " << (proxy.enabled ? L"true" : L"false") << L"\n"
              << L"    }" << (i + 1 < config.proxies.size() ? L"," : L"") << L"\n";
     }
     json << L"  ]\n"
@@ -400,6 +438,9 @@ bool WriteFrpcToml(const AppConfig& config, std::wstring* error) {
              << L"token = \"" << EscapeToml(config.authToken) << L"\"\n\n";
     }
     for (const auto& proxy : config.proxies) {
+        if (!proxy.enabled) {
+            continue;
+        }
         std::wstring type = NormalizeProxyType(proxy.type);
         toml << L"[[proxies]]\n"
              << L"name = \"" << EscapeToml(proxy.name) << L"\"\n"

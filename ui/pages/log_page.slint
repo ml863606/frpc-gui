@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, TextEdit } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -113,30 +113,33 @@ export component LogPage inherits Rectangle {
             border-width: 1px;
             border-radius: 10px;
 
-            VerticalLayout {
-                padding: 16px;
-                spacing: 12px;
+            ScrollView {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                viewport-width: parent.width;
+                viewport-height: parent.height;
 
                 Text {
-                    text: root.current_tab == 0 ? "exe 操作日志" : "frpc 自带日志";
-                    color: #0f172a;
-                    font-size: 18px;
-                    font-weight: 800;
+                    text: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? "暂无日志" : (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text);
+                    color: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? #94a3b8 : #111827;
+                    font-size: 13px;
+                    font-family: "Consolas";
+                    wrap: word-wrap;
                 }
+            }
 
-                Rectangle { height: 1px; background: #edf2f7; }
-
-                ScrollView {
-                    viewport-width: parent.width;
-                    viewport-height: parent.height;
-                    Text {
-                        text: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? "暂无日志" : (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text);
-                        color: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? #94a3b8 : #111827;
-                        font-size: 13px;
-                        font-family: "Consolas";
-                        wrap: word-wrap;
-                    }
-                }
+            log-input := TextEdit {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                text: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? "暂无日志" : (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text);
+                font-size: 13px;
+                font-family: "Consolas";
+                read-only: true;
+                opacity: log-input.has-focus ? 1 : 0;
             }
         }
     }

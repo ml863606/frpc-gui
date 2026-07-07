@@ -9,6 +9,7 @@ struct ProxyConfig {
     std::wstring localIP = L"127.0.0.1";
     int localPort = 8080;
     int remotePort = 6000;
+    bool enabled = true;
 };
 
 struct AppConfig {
@@ -24,6 +25,7 @@ struct AppConfig {
 std::wstring GetAppDataDir();
 std::wstring GetBinDir();
 std::wstring GetDownloadsDir();
+std::wstring GetLogsDir();
 std::wstring GetFrpcPath();
 std::wstring GetFrpcPathForVersion(const std::wstring& version);
 std::wstring GetConfigPath();

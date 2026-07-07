@@ -1,4 +1,4 @@
-# frp-desk
+﻿# frpc-gui
 
 极轻量 Windows frp 客户端。界面使用 Slint 1.16 + C++，运行 frp 官方 `frpc.exe` 子进程，不引入 Electron、Tauri、WebView、Qt、MFC 或 .NET。
 
@@ -22,10 +22,10 @@
 
 ## 运行数据目录
 
-程序运行时只写入当前 `frp-desk.exe` 所在目录下的文件和子目录：
+程序运行时只写入当前 `frpc-gui.exe` 所在目录下的文件和子目录：
 
 ```text
-<frp-desk.exe 所在目录>\
+<frpc-gui.exe 所在目录>\
 ```
 
 其中：
@@ -69,7 +69,7 @@ https://gh.zwy.one/github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_
 默认版本文件：
 
 ```text
-<frp-desk.exe 所在目录>\versions\0.69.1.json
+<frpc-gui.exe 所在目录>\versions\0.69.1.json
 ```
 
 ## 构建
@@ -82,7 +82,7 @@ https://gh.zwy.one/github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_
 third_party\slint\1.16.0\
 ```
 
-构建后会把 `slint_cpp.dll` 复制到输出目录，运行时需要和 `frp-desk.exe` 放在同级。
+构建后会把 `slint_cpp.dll` 复制到输出目录，运行时需要和 `frpc-gui.exe` 放在同级。
 
 ## UI 模块结构
 
@@ -109,7 +109,7 @@ cmake --build build --config Release
 输出：
 
 ```text
-build\Release\frp-desk.exe
+build\Release\frpc-gui.exe
 ```
 
 ## 手动放置 frpc
@@ -117,5 +117,5 @@ build\Release\frp-desk.exe
 如果下载失败，可以手动下载 frp Windows amd64 包，解压后把 `frpc.exe` 放到：
 
 ```text
-<frp-desk.exe 所在目录>\bin\0.69.1\frpc.exe
+<frpc-gui.exe 所在目录>\bin\0.69.1\frpc.exe
 ```

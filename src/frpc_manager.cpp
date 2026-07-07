@@ -1,12 +1,14 @@
-#include "frpc_manager.h"
+﻿#include "frpc_manager.h"
 
 #include "config.h"
 
+#include <tlhelp32.h>
 #include <winhttp.h>
 #include <windows.h>
 
 #include <filesystem>
 #include <algorithm>
+#include <cwctype>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -44,6 +46,88 @@ std::wstring JoinPath(const std::wstring& left, const std::wstring& right) {
     std::filesystem::path path(left);
     path /= right;
     return path.wstring();
+}
+
+std::wstring LowerAscii(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(towlower(ch));
+    });
+    return value;
+}
+
+bool IsExactFrpcProcessName(HANDLE process) {
+    wchar_t imagePath[MAX_PATH]{};
+    DWORD size = static_cast<DWORD>(_countof(imagePath));
+    if (!QueryFullProcessImageNameW(process, 0, imagePath, &size)) {
+        return false;
+    }
+
+    std::filesystem::path path(std::wstring(imagePath, size));
+    return LowerAscii(path.stem().wstring()) == L"frpc";
+}
+
+bool IsSamePath(const std::wstring& left, const std::wstring& right) {
+    std::error_code ec;
+    std::filesystem::path leftPath = std::filesystem::weakly_canonical(std::filesystem::path(left), ec);
+    if (ec) {
+        leftPath = std::filesystem::path(left).lexically_normal();
+        ec.clear();
+    }
+    std::filesystem::path rightPath = std::filesystem::weakly_canonical(std::filesystem::path(right), ec);
+    if (ec) {
+        rightPath = std::filesystem::path(right).lexically_normal();
+    }
+    return LowerAscii(leftPath.wstring()) == LowerAscii(rightPath.wstring());
+}
+
+bool QueryProcessImagePath(DWORD pid, std::wstring& imagePath) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) {
+        return false;
+    }
+
+    wchar_t path[MAX_PATH]{};
+    DWORD size = static_cast<DWORD>(_countof(path));
+    bool ok = QueryFullProcessImageNameW(process, 0, path, &size) != FALSE;
+    CloseHandle(process);
+    if (!ok) {
+        return false;
+    }
+    imagePath.assign(path, size);
+    return true;
+}
+
+std::vector<DWORD> FindExactFrpcPidsByPath(const std::wstring& frpcPath) {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    std::vector<DWORD> pids;
+    for (BOOL ok = Process32FirstW(snapshot, &entry); ok; ok = Process32NextW(snapshot, &entry)) {
+        std::filesystem::path exeName(entry.szExeFile);
+        if (LowerAscii(exeName.stem().wstring()) != L"frpc") {
+            continue;
+        }
+
+        std::wstring imagePath;
+        if (!QueryProcessImagePath(entry.th32ProcessID, imagePath)) {
+            continue;
+        }
+        if (IsSamePath(imagePath, frpcPath)) {
+            pids.push_back(entry.th32ProcessID);
+        }
+    }
+
+    CloseHandle(snapshot);
+    return pids;
+}
+
+DWORD FindExactFrpcPidByPath(const std::wstring& frpcPath) {
+    std::vector<DWORD> pids = FindExactFrpcPidsByPath(frpcPath);
+    return pids.empty() ? 0 : pids.front();
 }
 
 bool RunHidden(const std::wstring& commandLine, const std::wstring& workDir, DWORD* exitCode) {
@@ -91,7 +175,7 @@ bool DownloadToFile(const std::wstring& url, const std::wstring& filePath,
         return false;
     }
 
-    HINTERNET session = WinHttpOpen(L"frp-desk/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    HINTERNET session = WinHttpOpen(L"frpc-gui/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         if (error) *error = L"初始化 WinHTTP 失败: " + LastErrorText();
@@ -260,6 +344,7 @@ void FrpcManager::CloseProcessHandles() {
         CloseHandle(process_);
         process_ = nullptr;
     }
+    processId_ = 0;
 }
 
 bool FrpcManager::Start(const std::wstring& frpcPath,
@@ -312,6 +397,7 @@ bool FrpcManager::Start(const std::wstring& frpcPath,
         std::lock_guard<std::mutex> lock(mutex_);
         process_ = pi.hProcess;
         mainThread_ = pi.hThread;
+        processId_ = pi.dwProcessId;
     }
     running_ = true;
     log(L"frpc 已启动");
@@ -356,7 +442,53 @@ void FrpcManager::Stop() {
 }
 
 bool FrpcManager::IsRunning() const {
-    return running_;
+    return RunningFrpcPid() != 0;
+}
+
+DWORD FrpcManager::RunningFrpcPid() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!process_ || !running_) {
+        return 0;
+    }
+
+    DWORD code = 0;
+    if (!GetExitCodeProcess(process_, &code) || code != STILL_ACTIVE) {
+        return 0;
+    }
+    if (!IsExactFrpcProcessName(process_)) {
+        return 0;
+    }
+    return processId_;
+}
+
+DWORD FrpcManager::FindExactFrpcPid(const std::wstring& frpcPath) const {
+    return FindExactFrpcPidByPath(frpcPath);
+}
+
+std::vector<DWORD> FrpcManager::FindExactFrpcPids(const std::wstring& frpcPath) const {
+    return FindExactFrpcPidsByPath(frpcPath);
+}
+
+bool FrpcManager::StopExactFrpc(const std::wstring& frpcPath) {
+    std::vector<DWORD> pids = FindExactFrpcPidsByPath(frpcPath);
+    if (pids.empty()) {
+        return false;
+    }
+
+    bool stoppedAny = false;
+    for (DWORD pid : pids) {
+        HANDLE process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+        if (!process) {
+            continue;
+        }
+        BOOL terminated = TerminateProcess(process, 0);
+        if (terminated) {
+            WaitForSingleObject(process, 3000);
+            stoppedAny = true;
+        }
+        CloseHandle(process);
+    }
+    return stoppedAny;
 }
 
 bool FrpcManager::DownloadFrpc(const FrpVersionInfo& version,

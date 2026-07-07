@@ -1,6 +1,8 @@
 #include <windows.h>
 #include "resource.h"
 
+IDI_APP ICON "../resources/logo/frpc-gui.ico"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 0,1,0,0
  PRODUCTVERSION 0,1,0,0
@@ -19,11 +21,11 @@ BEGIN
         BLOCK "080404b0"
         BEGIN
             VALUE "CompanyName", "mxl"
-            VALUE "FileDescription", "frp-desk"
+            VALUE "FileDescription", "frpc-gui"
             VALUE "FileVersion", "0.1.0"
-            VALUE "InternalName", "frp-desk"
-            VALUE "OriginalFilename", "frp-desk.exe"
-            VALUE "ProductName", "frp-desk"
+            VALUE "InternalName", "frpc-gui"
+            VALUE "OriginalFilename", "frpc-gui.exe"
+            VALUE "ProductName", "frpc-gui"
             VALUE "ProductVersion", "0.1.0"
         END
     END
