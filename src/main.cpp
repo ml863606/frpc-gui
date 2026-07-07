@@ -25,7 +25,8 @@ namespace {
 AppConfig g_config;
 std::vector<FrpVersionInfo> g_versions;
 FrpcManager g_frpc;
-std::vector<std::string> g_logs;
+std::vector<std::string> g_appLogs;
+std::vector<std::string> g_frpcLogs;
 std::wstring g_downloadingVersion;
 int g_downloadProgress = 0;
 bool g_connectionTesting = false;
@@ -87,6 +88,35 @@ bool TryParsePort(const std::wstring& text, int& port) {
     }
     port = static_cast<int>(value);
     return true;
+}
+
+std::wstring ProxyTypeFromIndex(int index) {
+    switch (index) {
+    case 1: return L"udp";
+    case 2: return L"http";
+    case 3: return L"https";
+    default: return L"tcp";
+    }
+}
+
+int ProxyTypeIndex(const std::wstring& type) {
+    std::wstring lower = type;
+    for (auto& ch : lower) {
+        ch = static_cast<wchar_t>(std::towlower(ch));
+    }
+    if (lower == L"udp") return 1;
+    if (lower == L"http") return 2;
+    if (lower == L"https") return 3;
+    return 0;
+}
+
+std::wstring ProxyTypeDisplay(const std::wstring& type) {
+    switch (ProxyTypeIndex(type)) {
+    case 1: return L"UDP";
+    case 2: return L"HTTP";
+    case 3: return L"HTTPS";
+    default: return L"TCP";
+    }
 }
 
 std::wstring WinsockErrorText(int code) {
@@ -230,6 +260,8 @@ bool CopyTextToClipboard(const std::wstring& text) {
 ProxyRow BuildProxyRow(const ProxyConfig& proxy, size_t index) {
     ProxyRow row;
     row.index = static_cast<int>(index + 1);
+    row.proxy_type = S(ProxyTypeDisplay(proxy.type));
+    row.type_index = ProxyTypeIndex(proxy.type);
     row.name = S(proxy.name);
     row.local_ip = S(proxy.localIP);
     row.local_port = proxy.localPort;
@@ -238,7 +270,8 @@ ProxyRow BuildProxyRow(const ProxyConfig& proxy, size_t index) {
 }
 
 bool ValidateProxy(const ProxyConfig& proxy) {
-    return !proxy.name.empty() && !proxy.localIP.empty() &&
+    return ProxyTypeIndex(proxy.type) >= 0 &&
+           !proxy.name.empty() && !proxy.localIP.empty() &&
            proxy.localPort > 0 && proxy.localPort <= 65535 &&
            proxy.remotePort > 0 && proxy.remotePort <= 65535;
 }
@@ -304,9 +337,9 @@ std::shared_ptr<slint::Model<slint::SharedString>> BuildVersionOptions() {
     return std::make_shared<slint::VectorModel<slint::SharedString>>(std::move(options));
 }
 
-std::string BuildLogText() {
+std::string BuildLogText(const std::vector<std::string>& logs) {
     std::string text;
-    for (const auto& line : g_logs) {
+    for (const auto& line : logs) {
         text += line;
         text += "\n";
     }
@@ -335,42 +368,63 @@ void RefreshUi(const AppHandle& ui) {
     ui->set_version_pairs(BuildVersionPairs());
     ui->set_downloading_version(S(g_downloadingVersion));
     ui->set_download_progress(g_downloadProgress);
-    ui->set_log_text(slint::SharedString(BuildLogText()));
+    ui->set_app_log_text(slint::SharedString(BuildLogText(g_appLogs)));
+    ui->set_frpc_log_text(slint::SharedString(BuildLogText(g_frpcLogs)));
     const bool running = g_frpc.IsRunning();
     int serviceState = running ? 1 : (g_serviceFailed ? 2 : 0);
     ui->set_service_state(serviceState);
     ui->set_status_text(slint::SharedString(running ? "运行中" : (g_serviceFailed ? "启动失败" : "未启动")));
 }
 
-void AddLog(const std::wstring& text, const slint::ComponentWeakHandle<AppWindow>& weak) {
+void AppendLogLines(std::vector<std::string>& logs, const std::string& utf8) {
+    size_t start = 0;
+    while (start < utf8.size()) {
+        size_t end = utf8.find('\n', start);
+        std::string line = utf8.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            logs.push_back(line);
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (utf8.empty()) logs.emplace_back("");
+    if (logs.size() > 500) {
+        logs.erase(logs.begin(), logs.begin() + static_cast<ptrdiff_t>(logs.size() - 500));
+    }
+}
+
+void AddLogTo(std::vector<std::string>& logs,
+              const std::wstring& text,
+              const slint::ComponentWeakHandle<AppWindow>& weak,
+              bool frpcLog) {
     std::string utf8 = WideToUtf8(text);
+    std::string snapshot;
     {
         std::lock_guard<std::mutex> lock(g_stateMutex);
-        size_t start = 0;
-        while (start < utf8.size()) {
-            size_t end = utf8.find('\n', start);
-            std::string line = utf8.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
-                line.pop_back();
-            }
-            if (!line.empty()) {
-                g_logs.push_back(line);
-            }
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-        if (utf8.empty()) g_logs.emplace_back("");
-        if (g_logs.size() > 500) {
-            g_logs.erase(g_logs.begin(), g_logs.begin() + static_cast<ptrdiff_t>(g_logs.size() - 500));
-        }
+        AppendLogLines(logs, utf8);
+        snapshot = BuildLogText(logs);
     }
 
-    slint::invoke_from_event_loop([weak] {
+    slint::invoke_from_event_loop([weak, snapshot, frpcLog] {
         if (auto ui = weak.lock()) {
-            std::lock_guard<std::mutex> lock(g_stateMutex);
-            (*ui)->set_log_text(slint::SharedString(BuildLogText()));
+            if (frpcLog) {
+                (*ui)->set_frpc_log_text(slint::SharedString(snapshot));
+            } else {
+                (*ui)->set_app_log_text(slint::SharedString(snapshot));
+            }
         }
     });
+}
+
+void AddAppLog(const std::wstring& text, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    AddLogTo(g_appLogs, text, weak, false);
+}
+
+void AddFrpcLog(const std::wstring& text, const slint::ComponentWeakHandle<AppWindow>& weak) {
+    AddLogTo(g_frpcLogs, text, weak, true);
 }
 
 void ReadUiToConfig(const AppHandle& ui) {
@@ -440,10 +494,12 @@ void StartFrpc(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>&
         return;
     }
 
+    AddAppLog(L"启动 frpc: " + CurrentFrpcPath(), weak);
+
     std::wstring error;
     bool ok = g_frpc.Start(CurrentFrpcPath(), GetTomlPath(),
                            std::filesystem::path(CurrentFrpcPath()).parent_path().wstring(),
-                           [weak](const std::wstring& line) { AddLog(line, weak); },
+                           [weak](const std::wstring& line) { AddFrpcLog(line, weak); },
                            [weak](DWORD) {
                                slint::invoke_from_event_loop([weak] {
                                    if (auto ui = weak.lock()) {
@@ -462,10 +518,13 @@ void StartFrpc(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>&
             g_serviceFailed = true;
         }
         MessageBoxW(nullptr, error.c_str(), L"启动失败", MB_ICONERROR);
-        AddLog(L"启动失败: " + error, weak);
+        AddAppLog(L"启动失败: " + error, weak);
     } else {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
-        g_serviceFailed = false;
+        {
+            std::lock_guard<std::mutex> lock(g_stateMutex);
+            g_serviceFailed = false;
+        }
+        AddAppLog(L"frpc 启动命令已发送", weak);
     }
     RefreshUi(ui);
 }
@@ -507,7 +566,7 @@ void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWind
     std::thread([selected, mirror, weak]() {
         std::wstring error;
         bool ok = g_frpc.DownloadFrpc(selected, mirror, [weak](const std::wstring& line) {
-            AddLog(line, weak);
+            AddAppLog(line, weak);
         }, [weak, version = selected.version](int progress) {
             if (progress < 0) progress = 0;
             if (progress > 100) progress = 100;
@@ -548,7 +607,7 @@ void StartRefreshVersions(const AppHandle& ui, const slint::ComponentWeakHandle<
         std::vector<FrpVersionInfo> versions;
         std::wstring error;
         bool ok = RefreshFrpVersionsFromGitHub(versions, [weak](const std::wstring& line) {
-            AddLog(line, weak);
+            AddAppLog(line, weak);
         }, &error);
 
         slint::invoke_from_event_loop([weak, ok, error, versions = std::move(versions)]() mutable {
@@ -617,10 +676,10 @@ void StartConnectionTest(const AppHandle& ui, const slint::ComponentWeakHandle<A
                 std::wstring status;
                 if (ok) {
                     status = L"端口可连接: " + host + L":" + std::to_wstring(port);
-                    AddLog(L"连通性测试成功: " + host + L":" + std::to_wstring(port), weak);
+                    AddAppLog(L"连通性测试成功: " + host + L":" + std::to_wstring(port), weak);
                 } else {
                     status = L"连接失败: " + error;
-                    AddLog(L"连通性测试失败: " + host + L":" + std::to_wstring(port) + L" - " + error,
+                    AddAppLog(L"连通性测试失败: " + host + L":" + std::to_wstring(port) + L" - " + error,
                            weak);
                 }
                 {
@@ -684,11 +743,12 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     auto ui = AppWindow::create();
     slint::ComponentWeakHandle<AppWindow> weak(ui);
 
-    AddLog(L"运行目录: " + GetAppDataDir(), weak);
+    AddAppLog(L"运行目录: " + GetAppDataDir(), weak);
     RefreshUi(ui);
 
     ui->on_start_service([ui, weak] { StartFrpc(ui, weak); });
-    ui->on_stop_service([ui] {
+    ui->on_stop_service([ui, weak] {
+        AddAppLog(L"停止 frpc 服务", weak);
         g_frpc.Stop();
         {
             std::lock_guard<std::mutex> lock(g_stateMutex);
@@ -713,10 +773,15 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     ui->on_open_version_folder([](slint::SharedString version) {
         OpenVersionFolder(version);
     });
-    ui->on_clear_log([ui] {
+    ui->on_clear_app_log([ui] {
         std::lock_guard<std::mutex> lock(g_stateMutex);
-        g_logs.clear();
-        ui->set_log_text("");
+        g_appLogs.clear();
+        ui->set_app_log_text("");
+    });
+    ui->on_clear_frpc_log([ui] {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        g_frpcLogs.clear();
+        ui->set_frpc_log_text("");
     });
     ui->on_add_proxy([ui](slint::SharedString name, slint::SharedString localIp,
                           int localPort, int remotePort) {

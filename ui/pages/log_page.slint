@@ -1,24 +1,112 @@
-import { Button, ScrollView } from "std-widgets.slint";
-import { Card } from "../components/card.slint";
+import { ScrollView } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: 34px;
+    width: 88px;
+    background: #ffffff;
+    border-color: #cfd8e6;
+    border-width: 1px;
+    border-radius: 7px;
+
+    Text {
+        text: root.text;
+        color: #243047;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
+component LogPanel inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> log_text;
+    callback clear();
+
+    background: #ffffff;
+    border-color: #dbe3ee;
+    border-width: 1px;
+    border-radius: 10px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: root.title; font-size: 18px; font-weight: 800; color: #0f172a; }
+                Text { text: root.subtitle; font-size: 13px; color: #64748b; }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            ActionButton { text: "清空"; clicked => { root.clear(); } }
+        }
+
+        Rectangle { height: 1px; background: #edf2f7; }
+
+        ScrollView {
+            viewport-width: parent.width;
+            viewport-height: parent.height;
+            Text {
+                text: root.log_text == "" ? "暂无日志" : root.log_text;
+                color: root.log_text == "" ? #94a3b8 : #111827;
+                font-size: 13px;
+                font-family: "Consolas";
+                wrap: word-wrap;
+            }
+        }
+    }
+}
 
 export component LogPage inherits Rectangle {
-    in property <string> log_text;
-    callback clear_log();
+    in property <string> app_log_text;
+    in property <string> frpc_log_text;
+    callback clear_app_log();
+    callback clear_frpc_log();
 
     background: transparent;
 
     VerticalLayout {
-        padding: 28px;
-        spacing: 14px;
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 28px;
+        padding-bottom: 24px;
+        spacing: 18px;
         alignment: start;
-        Text { text: "日志界面"; font-size: 26px; font-weight: 700; color: #111827; }
-        Button { text: "清空日志"; clicked => { root.clear_log(); } }
-        Card {
-            height: 540px;
-            ScrollView {
-                viewport-width: parent.width;
-                viewport-height: parent.height;
-                Text { text: root.log_text; color: #111827; }
+
+        VerticalLayout {
+            spacing: 6px;
+            Text { text: "日志界面"; font-size: 30px; font-weight: 800; color: #0f172a; }
+            Text { text: "操作日志和 frpc 输出分开查看，避免运行日志混在一起。"; color: #64748b; font-size: 15px; }
+        }
+
+        HorizontalLayout {
+            spacing: 14px;
+            LogPanel {
+                width: 342px;
+                height: 572px;
+                title: "exe 操作日志";
+                subtitle: "下载、同步、配置、连通性";
+                log_text: root.app_log_text;
+                clear => { root.clear_app_log(); }
+            }
+            LogPanel {
+                width: 342px;
+                height: 572px;
+                title: "frpc 自带日志";
+                subtitle: "frpc stdout / stderr";
+                log_text: root.frpc_log_text;
+                clear => { root.clear_frpc_log(); }
             }
         }
     }

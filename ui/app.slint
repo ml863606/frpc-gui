@@ -31,19 +31,26 @@ export component AppWindow inherits Window {
     in property <[VersionPair]> version_pairs;
     in-out property <string> downloading_version: "";
     in-out property <int> download_progress: 0;
-    in-out property <string> log_text: "";
+    in-out property <string> app_log_text: "";
+    in-out property <string> frpc_log_text: "";
 
     in-out property <bool> show_add_proxy: false;
+    in-out property <int> add_proxy_type_index: 0;
     in-out property <string> add_proxy_name: "";
     in-out property <string> add_proxy_local_ip: "127.0.0.1";
     in-out property <int> add_proxy_local_port: 8080;
     in-out property <int> add_proxy_remote_port: 6000;
+    in-out property <string> add_proxy_local_port_text: "8080";
+    in-out property <string> add_proxy_remote_port_text: "6000";
     in-out property <bool> show_edit_proxy: false;
     in-out property <int> edit_proxy_index: 0;
+    in-out property <int> edit_proxy_type_index: 0;
     in-out property <string> edit_proxy_name: "";
     in-out property <string> edit_proxy_local_ip: "127.0.0.1";
     in-out property <int> edit_proxy_local_port: 8080;
     in-out property <int> edit_proxy_remote_port: 6000;
+    in-out property <string> edit_proxy_local_port_text: "8080";
+    in-out property <string> edit_proxy_remote_port_text: "6000";
     in-out property <int> service_state: 0;
 
     callback start_service();
@@ -55,10 +62,11 @@ export component AppWindow inherits Window {
     callback download_version(string);
     callback copy_download_url(string);
     callback open_version_folder(string);
-    callback add_proxy(string, string, int, int);
-    callback edit_proxy(int, string, string, int, int);
+    callback add_proxy(int, string, string, string, string);
+    callback edit_proxy(int, int, string, string, string, string);
     callback delete_proxy(int);
-    callback clear_log();
+    callback clear_app_log();
+    callback clear_frpc_log();
 
     Rectangle {
         width: parent.width;
@@ -139,21 +147,23 @@ export component AppWindow inherits Window {
                 proxy_pairs: root.proxy_pairs;
                 proxy_count: root.proxy_count;
                 show_add_proxy <=> root.show_add_proxy;
+                add_proxy_type_index <=> root.add_proxy_type_index;
                 add_proxy_name <=> root.add_proxy_name;
                 add_proxy_local_ip <=> root.add_proxy_local_ip;
-                add_proxy_local_port <=> root.add_proxy_local_port;
-                add_proxy_remote_port <=> root.add_proxy_remote_port;
+                add_proxy_local_port_text <=> root.add_proxy_local_port_text;
+                add_proxy_remote_port_text <=> root.add_proxy_remote_port_text;
                 show_edit_proxy <=> root.show_edit_proxy;
                 edit_proxy_index <=> root.edit_proxy_index;
+                edit_proxy_type_index <=> root.edit_proxy_type_index;
                 edit_proxy_name <=> root.edit_proxy_name;
                 edit_proxy_local_ip <=> root.edit_proxy_local_ip;
-                edit_proxy_local_port <=> root.edit_proxy_local_port;
-                edit_proxy_remote_port <=> root.edit_proxy_remote_port;
-                add_proxy(name, local_ip, local_port, remote_port) => {
-                    root.add_proxy(name, local_ip, local_port, remote_port);
+                edit_proxy_local_port_text <=> root.edit_proxy_local_port_text;
+                edit_proxy_remote_port_text <=> root.edit_proxy_remote_port_text;
+                add_proxy(type_index, name, local_ip, local_port, remote_port) => {
+                    root.add_proxy(type_index, name, local_ip, local_port, remote_port);
                 }
-                edit_proxy(index, name, local_ip, local_port, remote_port) => {
-                    root.edit_proxy(index, name, local_ip, local_port, remote_port);
+                edit_proxy(index, type_index, name, local_ip, local_port, remote_port) => {
+                    root.edit_proxy(index, type_index, name, local_ip, local_port, remote_port);
                 }
                 delete_proxy(index) => {
                     root.delete_proxy(index);
@@ -196,8 +206,10 @@ export component AppWindow inherits Window {
             LogPage {
                 visible: root.current_page == 4;
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
-                log_text: root.log_text;
-                clear_log => { root.clear_log(); }
+                app_log_text: root.app_log_text;
+                frpc_log_text: root.frpc_log_text;
+                clear_app_log => { root.clear_app_log(); }
+                clear_frpc_log => { root.clear_frpc_log(); }
             }
         }
     }

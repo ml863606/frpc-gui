@@ -30,10 +30,12 @@ component ActionButton inherits Rectangle {
 component MetricCard inherits Rectangle {
     in property <string> label;
     in property <string> value;
+    in property <length> card_width: 220px;
+    in property <length> value_font_size: 22px;
     in property <color> bg: #ffffff;
     in property <color> border: #dbe3ee;
     in property <color> value_color: #0f172a;
-    width: 220px;
+    width: card_width;
     height: 104px;
     background: bg;
     border-color: border;
@@ -44,7 +46,14 @@ component MetricCard inherits Rectangle {
         padding: 16px;
         spacing: 8px;
         Text { text: root.label; color: #64748b; font-size: 14px; font-weight: 700; }
-        Text { text: root.value; font-size: 22px; font-weight: 800; color: root.value_color; }
+        Text {
+            text: root.value;
+            width: parent.width - 32px;
+            font-size: root.value_font_size;
+            font-weight: 800;
+            color: root.value_color;
+            wrap: word-wrap;
+        }
     }
 }
 
@@ -100,10 +109,12 @@ export component StatusPage inherits Rectangle {
                 border: root.service_state == 1 ? #86efac : (root.service_state == 2 ? #fecaca : #dbe3ee);
                 value_color: root.service_state == 1 ? #166534 : (root.service_state == 2 ? #991b1b : #475569);
             }
-            MetricCard { label: "当前版本"; value: root.selected_version; }
+            MetricCard { label: "当前版本"; value: root.selected_version; card_width: 160px; }
             MetricCard {
                 label: "frps";
                 value: (root.frps_public_ip == "" ? "未配置" : root.frps_public_ip) + ":" + root.frps_port;
+                card_width: 286px;
+                value_font_size: 18px;
             }
         }
 

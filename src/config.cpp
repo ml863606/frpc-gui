@@ -3,6 +3,7 @@
 #include <shlobj.h>
 #include <windows.h>
 
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -63,6 +64,16 @@ std::wstring EscapeJson(const std::wstring& value) {
 
 std::wstring EscapeToml(const std::wstring& value) {
     return EscapeJson(value);
+}
+
+std::wstring NormalizeProxyType(std::wstring type) {
+    for (auto& ch : type) {
+        ch = static_cast<wchar_t>(towlower(ch));
+    }
+    if (type == L"udp" || type == L"http" || type == L"https") {
+        return type;
+    }
+    return L"tcp";
 }
 
 bool FindJsonString(const std::wstring& json, const std::wstring& key, std::wstring& value) {
@@ -208,10 +219,12 @@ std::vector<ProxyConfig> ParseProxies(const std::wstring& json) {
     for (const auto& object : ExtractJsonObjectsFromArray(json, L"proxies")) {
         ProxyConfig proxy;
         FindJsonString(object, L"name", proxy.name);
+        FindJsonString(object, L"type", proxy.type);
         FindJsonString(object, L"localIP", proxy.localIP);
         FindJsonInt(object, L"localPort", proxy.localPort);
         FindJsonInt(object, L"remotePort", proxy.remotePort);
         if (proxy.name.empty()) proxy.name = L"tcp" + std::to_wstring(proxies.size() + 1);
+        proxy.type = NormalizeProxyType(proxy.type);
         if (proxy.localIP.empty()) proxy.localIP = L"127.0.0.1";
         if (proxy.localPort <= 0) proxy.localPort = 8080;
         if (proxy.remotePort <= 0) proxy.remotePort = 6000;
@@ -337,10 +350,12 @@ bool LoadConfig(AppConfig& config, std::wstring* error) {
     if (config.proxies.empty()) {
         ProxyConfig legacy;
         FindJsonString(json, L"proxyName", legacy.name);
+        FindJsonString(json, L"proxyType", legacy.type);
         FindJsonString(json, L"localIP", legacy.localIP);
         FindJsonInt(json, L"localPort", legacy.localPort);
         FindJsonInt(json, L"remotePort", legacy.remotePort);
         if (legacy.name.empty()) legacy.name = L"tcp1";
+        legacy.type = NormalizeProxyType(legacy.type);
         if (legacy.localIP.empty()) legacy.localIP = L"127.0.0.1";
         if (legacy.localPort <= 0) legacy.localPort = 8080;
         if (legacy.remotePort <= 0) legacy.remotePort = 6000;
@@ -364,7 +379,7 @@ bool SaveConfig(const AppConfig& config, std::wstring* error) {
         const auto& proxy = config.proxies[i];
         json << L"    {\n"
              << L"      \"name\": \"" << EscapeJson(proxy.name) << L"\",\n"
-             << L"      \"type\": \"tcp\",\n"
+             << L"      \"type\": \"" << EscapeJson(NormalizeProxyType(proxy.type)) << L"\",\n"
              << L"      \"localIP\": \"" << EscapeJson(proxy.localIP) << L"\",\n"
              << L"      \"localPort\": " << proxy.localPort << L",\n"
              << L"      \"remotePort\": " << proxy.remotePort << L"\n"
@@ -385,12 +400,16 @@ bool WriteFrpcToml(const AppConfig& config, std::wstring* error) {
              << L"token = \"" << EscapeToml(config.authToken) << L"\"\n\n";
     }
     for (const auto& proxy : config.proxies) {
+        std::wstring type = NormalizeProxyType(proxy.type);
         toml << L"[[proxies]]\n"
              << L"name = \"" << EscapeToml(proxy.name) << L"\"\n"
-             << L"type = \"tcp\"\n"
+             << L"type = \"" << EscapeToml(type) << L"\"\n"
              << L"localIP = \"" << EscapeToml(proxy.localIP) << L"\"\n"
-             << L"localPort = " << proxy.localPort << L"\n"
-             << L"remotePort = " << proxy.remotePort << L"\n\n";
+             << L"localPort = " << proxy.localPort << L"\n";
+        if (type == L"tcp" || type == L"udp") {
+            toml << L"remotePort = " << proxy.remotePort << L"\n";
+        }
+        toml << L"\n";
     }
 
     return WriteAllBytes(GetTomlPath(), WideToUtf8(toml.str()), error);

@@ -1,7 +1,9 @@
-import { LineEdit, SpinBox, ScrollView } from "std-widgets.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 
 export struct ProxyRow {
     index: int,
+    proxy_type: string,
+    type_index: int,
     name: string,
     local_ip: string,
     local_port: int,
@@ -35,11 +37,7 @@ component ActionButton inherits Rectangle {
         font-weight: 700;
     }
 
-    TouchArea {
-        width: parent.width;
-        height: parent.height;
-        clicked => { root.clicked(); }
-    }
+    TouchArea { width: parent.width; height: parent.height; clicked => { root.clicked(); } }
 }
 
 component SmallButton inherits Rectangle {
@@ -62,11 +60,7 @@ component SmallButton inherits Rectangle {
         font-weight: 800;
     }
 
-    TouchArea {
-        width: parent.width;
-        height: parent.height;
-        clicked => { root.clicked(); }
-    }
+    TouchArea { width: parent.width; height: parent.height; clicked => { root.clicked(); } }
 }
 
 component InfoPill inherits Rectangle {
@@ -88,6 +82,53 @@ component InfoPill inherits Rectangle {
     }
 }
 
+component FormLabel inherits Text {
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+component StyledTextField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    height: 38px;
+    background: #f8fafc;
+    border-color: input.has-focus ? #2563eb : #cbd5e1;
+    border-width: 1px;
+    border-radius: 8px;
+
+    Text {
+        x: 12px;
+        y: 0px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: root.placeholder;
+        color: #94a3b8;
+        font-size: 14px;
+        vertical-alignment: center;
+        visible: root.text == "" && !input.has-focus;
+    }
+
+    input := TextInput {
+        x: 12px;
+        y: 0px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text <=> root.text;
+        color: #0f172a;
+        font-size: 14px;
+        vertical-alignment: center;
+    }
+}
+
+component InputShell inherits Rectangle {
+    height: 40px;
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    border-width: 1px;
+    border-radius: 8px;
+}
+
 component FieldLine inherits HorizontalLayout {
     in property <string> label;
     in property <string> value;
@@ -107,6 +148,7 @@ component FieldLine inherits HorizontalLayout {
         font-size: 14px;
         font-weight: 700;
         vertical-alignment: center;
+        wrap: word-wrap;
     }
 }
 
@@ -133,12 +175,12 @@ component ProxyCard inherits Rectangle {
             Rectangle {
                 width: 42px;
                 height: 42px;
-                background: #e0f2fe;
+                background: root.item.proxy_type == "TCP" ? #e0f2fe : (root.item.proxy_type == "UDP" ? #fef3c7 : #eef5ff);
                 border-radius: 8px;
                 Text {
-                    text: "tcp";
-                    color: #0369a1;
-                    font-size: 13px;
+                    text: root.item.proxy_type;
+                    color: root.item.proxy_type == "TCP" ? #0369a1 : (root.item.proxy_type == "UDP" ? #92400e : #1d4ed8);
+                    font-size: root.item.proxy_type == "HTTPS" ? 10px : 12px;
                     font-weight: 800;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -148,17 +190,8 @@ component ProxyCard inherits Rectangle {
             VerticalLayout {
                 width: 160px;
                 spacing: 4px;
-                Text {
-                    text: root.item.name;
-                    color: #0f172a;
-                    font-size: 19px;
-                    font-weight: 800;
-                }
-                Text {
-                    text: "TCP 代理 #" + root.item.index;
-                    color: #64748b;
-                    font-size: 13px;
-                }
+                Text { text: root.item.name; color: #0f172a; font-size: 19px; font-weight: 800; }
+                Text { text: root.item.proxy_type + " 代理 #" + root.item.index; color: #64748b; font-size: 13px; }
             }
 
             Rectangle { horizontal-stretch: 1; }
@@ -169,56 +202,122 @@ component ProxyCard inherits Rectangle {
 
         VerticalLayout {
             spacing: 7px;
-            FieldLine {
-                label: "本地";
-                value: root.item.local_ip + ":" + root.item.local_port;
-            }
+            FieldLine { label: "本地"; value: root.item.local_ip + ":" + root.item.local_port; }
             FieldLine {
                 label: "远端";
-                value: "0.0.0.0:" + root.item.remote_port;
+                value: (root.item.proxy_type == "HTTP" || root.item.proxy_type == "HTTPS") ? "使用 frps HTTP入口" : "0.0.0.0:" + root.item.remote_port;
             }
         }
 
         HorizontalLayout {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; }
-            SmallButton {
-                text: "编辑";
-                width: 64px;
-                clicked => { root.edit(root.item.index); }
-            }
-            SmallButton {
-                text: "删除";
-                danger: true;
-                width: 64px;
-                clicked => { root.remove(root.item.index); }
-            }
+            SmallButton { text: "编辑"; width: 64px; clicked => { root.edit(root.item.index); } }
+            SmallButton { text: "删除"; danger: true; width: 64px; clicked => { root.remove(root.item.index); } }
         }
     }
 }
 
-component FormLabel inherits Text {
-    color: #334155;
-    font-size: 13px;
-    font-weight: 800;
+component ProxyForm inherits Rectangle {
+    in property <string> title;
+    in property <string> badge;
+    in-out property <int> type_index;
+    in-out property <string> name;
+    in-out property <string> local_ip;
+    in-out property <string> local_port_text;
+    in-out property <string> remote_port_text;
+    callback cancel();
+    callback save();
+
+    width: 430px;
+    height: 454px;
+    background: #ffffff;
+    border-color: #dbe3ee;
+    border-width: 1px;
+    border-radius: 10px;
+
+    VerticalLayout {
+        padding: 22px;
+        spacing: 13px;
+        alignment: start;
+
+        HorizontalLayout {
+            Text { text: root.title; font-size: 22px; font-weight: 800; color: #0f172a; }
+            Rectangle { horizontal-stretch: 1; }
+            InfoPill { text: root.badge; bg: #e0f2fe; fg: #0369a1; }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            FormLabel { text: "代理类型"; }
+            InputShell {
+                width: 386px;
+                ComboBox {
+                    x: 1px;
+                    y: 1px;
+                    width: parent.width - 2px;
+                    height: parent.height - 2px;
+                    model: ["TCP", "UDP", "HTTP", "HTTPS"];
+                    current-index <=> root.type_index;
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            FormLabel { text: "代理名称"; }
+            StyledTextField { text <=> root.name; placeholder: "例如 tcp1"; width: 386px; }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            FormLabel { text: "本地 IP"; }
+            StyledTextField { text <=> root.local_ip; placeholder: "127.0.0.1"; width: 386px; }
+        }
+
+        HorizontalLayout {
+            spacing: 14px;
+            VerticalLayout {
+                spacing: 6px;
+                FormLabel { text: "本地端口"; }
+                StyledTextField { text <=> root.local_port_text; placeholder: "8080"; width: 186px; }
+            }
+            VerticalLayout {
+                spacing: 6px;
+                FormLabel { text: "远端端口"; }
+                StyledTextField { text <=> root.remote_port_text; placeholder: "6000"; width: 186px; }
+            }
+        }
+
+        Rectangle { height: 4px; }
+
+        HorizontalLayout {
+            spacing: 10px;
+            Rectangle { horizontal-stretch: 1; }
+            ActionButton { text: "取消"; width: 96px; clicked => { root.cancel(); } }
+            ActionButton { text: "保存"; primary: true; width: 104px; clicked => { root.save(); } }
+        }
+    }
 }
 
 export component ProxyPage inherits Rectangle {
     in property <[ProxyPair]> proxy_pairs;
     in property <int> proxy_count;
     in-out property <bool> show_add_proxy;
+    in-out property <int> add_proxy_type_index;
     in-out property <string> add_proxy_name;
     in-out property <string> add_proxy_local_ip;
-    in-out property <int> add_proxy_local_port;
-    in-out property <int> add_proxy_remote_port;
+    in-out property <string> add_proxy_local_port_text;
+    in-out property <string> add_proxy_remote_port_text;
     in-out property <bool> show_edit_proxy;
     in-out property <int> edit_proxy_index;
+    in-out property <int> edit_proxy_type_index;
     in-out property <string> edit_proxy_name;
     in-out property <string> edit_proxy_local_ip;
-    in-out property <int> edit_proxy_local_port;
-    in-out property <int> edit_proxy_remote_port;
-    callback add_proxy(string, string, int, int);
-    callback edit_proxy(int, string, string, int, int);
+    in-out property <string> edit_proxy_local_port_text;
+    in-out property <string> edit_proxy_remote_port_text;
+    callback add_proxy(int, string, string, string, string);
+    callback edit_proxy(int, int, string, string, string, string);
     callback delete_proxy(int);
 
     background: transparent;
@@ -236,12 +335,7 @@ export component ProxyPage inherits Rectangle {
             VerticalLayout {
                 spacing: 6px;
                 Text { text: "代理设置"; font-size: 30px; font-weight: 800; color: #0f172a; }
-                Text {
-                    text: "当前仅支持 TCP 代理，保存后会刷新配置并生成 frpc.toml。";
-                    color: #64748b;
-                    font-size: 15px;
-                    wrap: word-wrap;
-                }
+                Text { text: "支持 TCP / UDP / HTTP / HTTPS 代理，保存后刷新配置并生成 frpc.toml。"; color: #64748b; font-size: 15px; wrap: word-wrap; }
             }
             Rectangle { horizontal-stretch: 1; }
             ActionButton {
@@ -249,10 +343,11 @@ export component ProxyPage inherits Rectangle {
                 primary: true;
                 width: 132px;
                 clicked => {
+                    root.add_proxy_type_index = 0;
                     root.add_proxy_name = "tcp" + (root.proxy_count + 1);
                     root.add_proxy_local_ip = "127.0.0.1";
-                    root.add_proxy_local_port = 8080;
-                    root.add_proxy_remote_port = 6000;
+                    root.add_proxy_local_port_text = "8080";
+                    root.add_proxy_remote_port_text = "6000";
                     root.show_add_proxy = true;
                 }
             }
@@ -261,7 +356,7 @@ export component ProxyPage inherits Rectangle {
         HorizontalLayout {
             Text { text: "代理列表"; font-size: 18px; font-weight: 800; color: #0f172a; }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: "共 " + root.proxy_count + " 个 TCP 代理"; color: #64748b; font-size: 14px; vertical-alignment: center; }
+            Text { text: "共 " + root.proxy_count + " 个代理"; color: #64748b; font-size: 14px; vertical-alignment: center; }
         }
 
         ScrollView {
@@ -283,7 +378,7 @@ export component ProxyPage inherits Rectangle {
                         padding: 20px;
                         spacing: 10px;
                         Text { text: "暂无代理"; color: #0f172a; font-size: 18px; font-weight: 800; }
-                        Text { text: "点击右上角“新增代理”创建 TCP 代理。"; color: #64748b; font-size: 14px; }
+                        Text { text: "点击右上角“新增代理”创建代理。"; color: #64748b; font-size: 14px; }
                     }
                 }
 
@@ -295,10 +390,11 @@ export component ProxyPage inherits Rectangle {
                         item: pair.left;
                         edit(index) => {
                             root.edit_proxy_index = index;
+                            root.edit_proxy_type_index = pair.left.type_index;
                             root.edit_proxy_name = pair.left.name;
                             root.edit_proxy_local_ip = pair.left.local_ip;
-                            root.edit_proxy_local_port = pair.left.local_port;
-                            root.edit_proxy_remote_port = pair.left.remote_port;
+                            root.edit_proxy_local_port_text = "" + pair.left.local_port;
+                            root.edit_proxy_remote_port_text = "" + pair.left.remote_port;
                             root.show_edit_proxy = true;
                         }
                         remove(index) => { root.delete_proxy(index); }
@@ -308,10 +404,11 @@ export component ProxyPage inherits Rectangle {
                         item: pair.right;
                         edit(index) => {
                             root.edit_proxy_index = index;
+                            root.edit_proxy_type_index = pair.right.type_index;
                             root.edit_proxy_name = pair.right.name;
                             root.edit_proxy_local_ip = pair.right.local_ip;
-                            root.edit_proxy_local_port = pair.right.local_port;
-                            root.edit_proxy_remote_port = pair.right.remote_port;
+                            root.edit_proxy_local_port_text = "" + pair.right.local_port;
+                            root.edit_proxy_remote_port_text = "" + pair.right.remote_port;
                             root.show_edit_proxy = true;
                         }
                         remove(index) => { root.delete_proxy(index); }
@@ -326,73 +423,20 @@ export component ProxyPage inherits Rectangle {
         background: #0f172a66;
         x: 0px; y: 0px; width: parent.width; height: parent.height;
 
-        Rectangle {
-            width: 430px;
-            height: 392px;
+        ProxyForm {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            background: #ffffff;
-            border-color: #dbe3ee;
-            border-width: 1px;
-            border-radius: 10px;
-
-            VerticalLayout {
-                padding: 22px;
-                spacing: 13px;
-                alignment: start;
-
-                HorizontalLayout {
-                    Text { text: "新增 TCP 代理"; font-size: 22px; font-weight: 800; color: #0f172a; }
-                    Rectangle { horizontal-stretch: 1; }
-                    InfoPill { text: "TCP"; bg: #e0f2fe; fg: #0369a1; }
-                }
-
-                VerticalLayout {
-                    spacing: 6px;
-                    FormLabel { text: "代理名称"; }
-                    LineEdit { text <=> root.add_proxy_name; placeholder-text: "例如 tcp1"; height: 38px; width: 386px; }
-                }
-
-                VerticalLayout {
-                    spacing: 6px;
-                    FormLabel { text: "本地 IP"; }
-                    LineEdit { text <=> root.add_proxy_local_ip; placeholder-text: "127.0.0.1"; height: 38px; width: 386px; }
-                }
-
-                HorizontalLayout {
-                    spacing: 14px;
-                    VerticalLayout {
-                        spacing: 6px;
-                        FormLabel { text: "本地端口"; }
-                        SpinBox { value <=> root.add_proxy_local_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
-                    }
-                    VerticalLayout {
-                        spacing: 6px;
-                        FormLabel { text: "远端端口"; }
-                        SpinBox { value <=> root.add_proxy_remote_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
-                    }
-                }
-
-                Rectangle { height: 4px; }
-
-                HorizontalLayout {
-                    spacing: 10px;
-                    Rectangle { horizontal-stretch: 1; }
-                    ActionButton {
-                        text: "取消";
-                        width: 96px;
-                        clicked => { root.show_add_proxy = false; }
-                    }
-                    ActionButton {
-                        text: "保存";
-                        primary: true;
-                        width: 104px;
-                        clicked => {
-                            root.add_proxy(root.add_proxy_name, root.add_proxy_local_ip, root.add_proxy_local_port, root.add_proxy_remote_port);
-                            root.show_add_proxy = false;
-                        }
-                    }
-                }
+            title: "新增代理";
+            badge: "TCP";
+            type_index <=> root.add_proxy_type_index;
+            name <=> root.add_proxy_name;
+            local_ip <=> root.add_proxy_local_ip;
+            local_port_text <=> root.add_proxy_local_port_text;
+            remote_port_text <=> root.add_proxy_remote_port_text;
+            cancel => { root.show_add_proxy = false; }
+            save => {
+                root.add_proxy(root.add_proxy_type_index, root.add_proxy_name, root.add_proxy_local_ip, root.add_proxy_local_port_text, root.add_proxy_remote_port_text);
+                root.show_add_proxy = false;
             }
         }
     }
@@ -401,73 +445,20 @@ export component ProxyPage inherits Rectangle {
         background: #0f172a66;
         x: 0px; y: 0px; width: parent.width; height: parent.height;
 
-        Rectangle {
-            width: 430px;
-            height: 392px;
+        ProxyForm {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            background: #ffffff;
-            border-color: #dbe3ee;
-            border-width: 1px;
-            border-radius: 10px;
-
-            VerticalLayout {
-                padding: 22px;
-                spacing: 13px;
-                alignment: start;
-
-                HorizontalLayout {
-                    Text { text: "编辑 TCP 代理"; font-size: 22px; font-weight: 800; color: #0f172a; }
-                    Rectangle { horizontal-stretch: 1; }
-                    InfoPill { text: "#" + root.edit_proxy_index; bg: #e0f2fe; fg: #0369a1; }
-                }
-
-                VerticalLayout {
-                    spacing: 6px;
-                    FormLabel { text: "代理名称"; }
-                    LineEdit { text <=> root.edit_proxy_name; placeholder-text: "例如 tcp1"; height: 38px; width: 386px; }
-                }
-
-                VerticalLayout {
-                    spacing: 6px;
-                    FormLabel { text: "本地 IP"; }
-                    LineEdit { text <=> root.edit_proxy_local_ip; placeholder-text: "127.0.0.1"; height: 38px; width: 386px; }
-                }
-
-                HorizontalLayout {
-                    spacing: 14px;
-                    VerticalLayout {
-                        spacing: 6px;
-                        FormLabel { text: "本地端口"; }
-                        SpinBox { value <=> root.edit_proxy_local_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
-                    }
-                    VerticalLayout {
-                        spacing: 6px;
-                        FormLabel { text: "远端端口"; }
-                        SpinBox { value <=> root.edit_proxy_remote_port; minimum: 1; maximum: 65535; width: 186px; height: 38px; }
-                    }
-                }
-
-                Rectangle { height: 4px; }
-
-                HorizontalLayout {
-                    spacing: 10px;
-                    Rectangle { horizontal-stretch: 1; }
-                    ActionButton {
-                        text: "取消";
-                        width: 96px;
-                        clicked => { root.show_edit_proxy = false; }
-                    }
-                    ActionButton {
-                        text: "保存";
-                        primary: true;
-                        width: 104px;
-                        clicked => {
-                            root.edit_proxy(root.edit_proxy_index, root.edit_proxy_name, root.edit_proxy_local_ip, root.edit_proxy_local_port, root.edit_proxy_remote_port);
-                            root.show_edit_proxy = false;
-                        }
-                    }
-                }
+            title: "编辑代理";
+            badge: "#" + root.edit_proxy_index;
+            type_index <=> root.edit_proxy_type_index;
+            name <=> root.edit_proxy_name;
+            local_ip <=> root.edit_proxy_local_ip;
+            local_port_text <=> root.edit_proxy_local_port_text;
+            remote_port_text <=> root.edit_proxy_remote_port_text;
+            cancel => { root.show_edit_proxy = false; }
+            save => {
+                root.edit_proxy(root.edit_proxy_index, root.edit_proxy_type_index, root.edit_proxy_name, root.edit_proxy_local_ip, root.edit_proxy_local_port_text, root.edit_proxy_remote_port_text);
+                root.show_edit_proxy = false;
             }
         }
     }

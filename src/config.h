@@ -5,6 +5,7 @@
 
 struct ProxyConfig {
     std::wstring name = L"tcp1";
+    std::wstring type = L"tcp";
     std::wstring localIP = L"127.0.0.1";
     int localPort = 8080;
     int remotePort = 6000;
