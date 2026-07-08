@@ -44,6 +44,7 @@ component ActionButton inherits Rectangle {
 component SmallButton inherits Rectangle {
     in property <string> text;
     in property <bool> danger: false;
+    in property <image> icon;
     callback clicked();
     height: 30px;
     horizontal-stretch: 0;
@@ -52,13 +53,36 @@ component SmallButton inherits Rectangle {
     border-width: 1px;
     border-radius: 7px;
 
-    Text {
-        text: root.text;
-        color: root.danger ? #be123c : #243047;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: 13px;
-        font-weight: 800;
+    HorizontalLayout {
+        x: 7px;
+        y: 0px;
+        width: parent.width - 14px;
+        height: parent.height;
+        spacing: 3px;
+        alignment: center;
+
+        Rectangle {
+            width: 13px;
+            height: parent.height;
+            background: transparent;
+
+            Image {
+                x: 0px;
+                y: (parent.height - self.height) / 2 + 1px;
+                source: root.icon;
+                width: 13px;
+                height: 13px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: root.danger ? #be123c : #243047;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 12px;
+            font-weight: 800;
+        }
     }
 
     TouchArea { width: parent.width; height: parent.height; clicked => { root.clicked(); } }
@@ -69,11 +93,14 @@ component InfoPill inherits Rectangle {
     in property <color> bg: #edf4ff;
     in property <color> fg: #1d4ed8;
     height: 28px;
-    min-width: 72px;
+    min-width: 68px;
     background: bg;
     border-radius: 14px;
 
     Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
         text: root.text;
         color: root.fg;
         horizontal-alignment: center;
@@ -217,7 +244,7 @@ component ProxyCard inherits Rectangle {
     callback remove(int);
     callback toggle(int);
     callback test(int);
-    height: 214px;
+    height: 182px;
     background: root.item.enabled ? #ffffff : #f8fafc;
     border-color: root.item.enabled ? #dbe3ee : #cbd5e1;
     border-width: 1px;
@@ -227,11 +254,11 @@ component ProxyCard inherits Rectangle {
         padding-left: 18px;
         padding-right: 18px;
         padding-top: 16px;
-        padding-bottom: 14px;
+        padding-bottom: 12px;
         spacing: 11px;
 
         HorizontalLayout {
-            spacing: 12px;
+            spacing: 10px;
 
             Rectangle {
                 width: 42px;
@@ -249,7 +276,7 @@ component ProxyCard inherits Rectangle {
             }
 
             VerticalLayout {
-                width: 160px;
+                width: 140px;
                 spacing: 4px;
                 Text { text: root.item.name; color: #0f172a; font-size: 19px; font-weight: 800; }
                 Text { text: root.item.proxy_type + " 代理 #" + root.item.index; color: #64748b; font-size: 13px; }
@@ -257,6 +284,7 @@ component ProxyCard inherits Rectangle {
 
             Rectangle { horizontal-stretch: 1; }
             InfoPill {
+                width: 70px;
                 text: root.item.enabled ? "已启用" : "已停用";
                 bg: root.item.enabled ? #dcfce7 : #e2e8f0;
                 fg: root.item.enabled ? #166534 : #475569;
@@ -274,13 +302,37 @@ component ProxyCard inherits Rectangle {
             }
         }
 
+        Rectangle { vertical-stretch: 1; }
+
         HorizontalLayout {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; }
-            SmallButton { text: root.item.enabled ? "停用" : "启用"; danger: root.item.enabled; width: 58px; clicked => { root.toggle(root.item.index); } }
-            SmallButton { text: "测试"; width: 54px; clicked => { root.test(root.item.index); } }
-            SmallButton { text: "编辑"; width: 54px; clicked => { root.edit(root.item.index); } }
-            SmallButton { text: "删除"; danger: true; width: 54px; clicked => { root.remove(root.item.index); } }
+            SmallButton {
+                text: root.item.enabled ? "停用" : "启用";
+                danger: root.item.enabled;
+                icon: root.item.enabled ? @image-url("../../resources/icons/power-off.svg") : @image-url("../../resources/icons/power.svg");
+                width: 62px;
+                clicked => { root.toggle(root.item.index); }
+            }
+            SmallButton {
+                text: "测试";
+                icon: @image-url("../../resources/icons/plug.svg");
+                width: 58px;
+                clicked => { root.test(root.item.index); }
+            }
+            SmallButton {
+                text: "编辑";
+                icon: @image-url("../../resources/icons/edit.svg");
+                width: 58px;
+                clicked => { root.edit(root.item.index); }
+            }
+            SmallButton {
+                text: "删除";
+                danger: true;
+                icon: @image-url("../../resources/icons/trash.svg");
+                width: 58px;
+                clicked => { root.remove(root.item.index); }
+            }
         }
     }
 }
@@ -477,7 +529,7 @@ export component ProxyPage inherits Rectangle {
                 }
 
                 for pair in root.proxy_pairs : HorizontalLayout {
-                    height: 214px;
+                    height: 182px;
                     spacing: 14px;
                     ProxyCard {
                         width: 342px;

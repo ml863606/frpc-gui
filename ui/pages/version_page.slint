@@ -1,4 +1,4 @@
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Card } from "../components/card.slint";
 
 export struct VersionRow {
@@ -20,10 +20,12 @@ export struct VersionPair {
 component ActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <bool> enabled: true;
     callback clicked();
     height: 40px;
     min-width: 132px;
     horizontal-stretch: 0;
+    opacity: enabled ? 1 : 0.72;
     background: primary ? #1d4ed8 : #f8fafc;
     border-color: primary ? #1d4ed8 : #d7dee8;
     border-width: 1px;
@@ -41,13 +43,76 @@ component ActionButton inherits Rectangle {
     TouchArea {
         width: parent.width;
         height: parent.height;
+        enabled: root.enabled;
         clicked => { root.clicked(); }
+    }
+}
+
+component SyncProgress inherits Rectangle {
+    height: 6px;
+    background: #dbeafe;
+    border-radius: 3px;
+    clip: true;
+
+    Rectangle {
+        x: 0px;
+        width: parent.width * 0.62;
+        height: parent.height;
+        border-radius: 3px;
+        background: #2563eb;
+    }
+}
+
+component SourceOption inherits Rectangle {
+    in-out property <int> selected_index;
+    in property <int> option_index;
+    in property <string> text;
+    height: 32px;
+    background: root.selected_index == root.option_index ? #2563eb : transparent;
+    border-radius: 7px;
+
+    Text {
+        text: root.text;
+        color: root.selected_index == root.option_index ? #ffffff : #334155;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 13px;
+        font-weight: 800;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.selected_index = root.option_index;
+        }
+    }
+}
+
+component SourceSelector inherits Rectangle {
+    in-out property <int> selected_index;
+    width: 178px;
+    height: 40px;
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    border-width: 1px;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: parent.height - 8px;
+        spacing: 4px;
+        SourceOption { width: 92px; selected_index <=> root.selected_index; option_index: 0; text: "默认镜像"; }
+        SourceOption { width: 70px; selected_index <=> root.selected_index; option_index: 1; text: "直连"; }
     }
 }
 
 component SmallButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <image> icon;
     callback clicked();
     height: 32px;
     horizontal-stretch: 0;
@@ -56,13 +121,36 @@ component SmallButton inherits Rectangle {
     border-width: 1px;
     border-radius: 7px;
 
-    Text {
-        text: root.text;
-        color: root.primary ? #ffffff : #243047;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: 13px;
-        font-weight: 700;
+    HorizontalLayout {
+        x: 8px;
+        y: 0px;
+        width: parent.width - 16px;
+        height: parent.height;
+        spacing: 4px;
+        alignment: center;
+
+        Rectangle {
+            width: 14px;
+            height: parent.height;
+            background: transparent;
+
+            Image {
+                x: 0px;
+                y: (parent.height - self.height) / 2 + 1px;
+                source: root.icon;
+                width: 14px;
+                height: 14px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: root.primary ? #ffffff : #243047;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
     }
 
     TouchArea {
@@ -77,11 +165,14 @@ component InfoPill inherits Rectangle {
     in property <color> bg: #edf4ff;
     in property <color> fg: #1d4ed8;
     height: 28px;
-    min-width: 92px;
+    min-width: 80px;
     background: bg;
     border-radius: 14px;
 
     Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
         text: root.text;
         color: root.fg;
         horizontal-alignment: center;
@@ -116,11 +207,12 @@ component VersionCard inherits Rectangle {
     callback download(string);
     callback copy_link(string);
     callback open_folder(string);
-    height: 196px;
+    height: 168px;
     background: selected ? #eef5ff : #ffffff;
     border-color: selected ? #3b82f6 : #dbe3ee;
     border-width: selected ? 2px : 1px;
     border-radius: 10px;
+    clip: true;
 
     TouchArea {
         width: parent.width;
@@ -132,11 +224,11 @@ component VersionCard inherits Rectangle {
         padding-left: 18px;
         padding-right: 18px;
         padding-top: 16px;
-        padding-bottom: 14px;
+        padding-bottom: 12px;
         spacing: 10px;
 
         HorizontalLayout {
-            spacing: 12px;
+            spacing: 10px;
 
             Rectangle {
                 width: 42px;
@@ -154,7 +246,7 @@ component VersionCard inherits Rectangle {
             }
 
             VerticalLayout {
-                width: 172px;
+                width: 136px;
                 spacing: 4px;
                 Text {
                     text: root.item.display_name;
@@ -178,6 +270,7 @@ component VersionCard inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
 
             InfoPill {
+                width: 82px;
                 text: root.downloading ? "下载中" : (root.item.installed ? "已下载" : (root.selected ? "当前选中" : "未下载"));
                 bg: root.downloading ? #fef3c7 : (root.item.installed ? #dcfce7 : (root.selected ? #dbeafe : #f1f5f9));
                 fg: root.downloading ? #92400e : (root.item.installed ? #166534 : (root.selected ? #1d4ed8 : #475569));
@@ -186,40 +279,45 @@ component VersionCard inherits Rectangle {
 
         Rectangle { height: 1px; background: #edf2f7; }
 
-        if root.downloading : HorizontalLayout {
-            spacing: 10px;
-            ProgressBar {
-                progress: root.progress;
-                width: 232px;
-            }
-            Text {
-                text: root.progress + "%";
-                width: 40px;
-                color: #475569;
-                font-size: 12px;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-        }
+        Rectangle { vertical-stretch: 1; }
 
         HorizontalLayout {
             spacing: 8px;
             SmallButton {
                 text: root.downloading ? "下载中..." : (root.item.installed ? "重新下载" : "下载");
                 primary: !root.item.installed || root.downloading;
-                width: 82px;
+                icon: (!root.item.installed || root.downloading) ? @image-url("../../resources/icons/download-white.svg") : @image-url("../../resources/icons/download.svg");
+                width: 92px;
                 clicked => { root.download(root.item.version); }
             }
             SmallButton {
                 text: "复制链接";
-                width: 82px;
+                icon: @image-url("../../resources/icons/copy.svg");
+                width: 92px;
                 clicked => { root.copy_link(root.item.version); }
             }
             if root.item.installed : SmallButton {
                 text: "打开目录";
-                width: 78px;
+                icon: @image-url("../../resources/icons/folder-open.svg");
+                width: 92px;
                 clicked => { root.open_folder(root.item.version); }
             }
+        }
+    }
+
+    if root.downloading : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 5px;
+        background: #dbeafe;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            height: parent.height;
+            width: parent.width * root.progress / 100;
+            background: #2563eb;
         }
     }
 }
@@ -231,7 +329,10 @@ export component VersionPage inherits Rectangle {
     in property <[VersionPair]> version_pairs;
     in property <string> downloading_version;
     in property <int> download_progress;
+    in property <bool> syncing_versions;
+    in property <string> sync_status;
     callback sync_versions();
+    callback select_version(string);
     callback download_version(string);
     callback copy_download_url(string);
     callback open_version_folder(string);
@@ -263,7 +364,8 @@ export component VersionPage inherits Rectangle {
         }
 
         Rectangle {
-            height: 112px;
+            width: 698px;
+            height: 92px;
             background: #ffffff;
             border-color: #dbe3ee;
             border-width: 1px;
@@ -274,29 +376,57 @@ export component VersionPage inherits Rectangle {
                 spacing: 12px;
                 alignment: start;
 
-                HorizontalLayout {
-                    spacing: 12px;
-                    ActionButton { text: "同步GitHub版本"; primary: true; width: 168px; clicked => { root.sync_versions(); } }
-                    Text {
-                        text: "下载源";
-                        color: #334155;
-                        font-size: 14px;
-                        font-weight: 800;
-                        vertical-alignment: center;
+                Rectangle {
+                    height: 40px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+
+                    HorizontalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        spacing: 0px;
+
+                        ActionButton {
+                            text: root.syncing_versions ? "同步中..." : "同步GitHub版本";
+                            primary: true;
+                            enabled: !root.syncing_versions;
+                            width: 168px;
+                            clicked => { root.sync_versions(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Rectangle {
+                            width: 231px;
+                            height: 40px;
+                            background: transparent;
+                            Text {
+                                x: 0px;
+                                y: 0px;
+                                width: 50px;
+                                height: parent.height;
+                                text: "下载源";
+                                color: #334155;
+                                font-size: 14px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                            SourceSelector {
+                                x: 53px;
+                                y: 0px;
+                                selected_index <=> root.download_source_index;
+                            }
+                        }
                     }
-                    ComboBox {
-                        width: 156px;
-                        height: 40px;
-                        model: ["默认镜像", "直连"];
-                        current-index <=> root.download_source_index;
-                    }
-                    Text {
-                        text: "当前版本：" + root.selected_version;
-                        color: #475569;
-                        font-size: 14px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
+                }
+
+                if root.syncing_versions : SyncProgress {
+                    width: 280px;
+                }
+
+                if root.sync_status != "" : Text {
+                    text: root.sync_status;
+                    color: root.syncing_versions ? #1d4ed8 : #64748b;
+                    font-size: 13px;
+                    font-weight: 700;
                 }
             }
         }
@@ -304,7 +434,6 @@ export component VersionPage inherits Rectangle {
         HorizontalLayout {
             Text { text: "版本列表"; font-size: 18px; font-weight: 800; color: #0f172a; }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: "点击卡片切换当前版本"; color: #64748b; font-size: 14px; vertical-alignment: center; }
         }
 
         ScrollView {
@@ -327,7 +456,7 @@ export component VersionPage inherits Rectangle {
                 }
 
                 for pair in root.version_pairs : HorizontalLayout {
-                    height: 196px;
+                    height: 168px;
                     spacing: 14px;
                     VersionCard {
                         width: 342px;
@@ -335,8 +464,8 @@ export component VersionPage inherits Rectangle {
                         selected: pair.left.version == root.selected_version;
                         downloading: pair.left.version == root.downloading_version;
                         progress: pair.left.version == root.downloading_version ? root.download_progress : 0;
-                        clicked => { root.selected_version = pair.left.version; }
-                        download(version) => { root.selected_version = version; root.download_version(version); }
+                        clicked => { root.selected_version = pair.left.version; root.select_version(pair.left.version); }
+                        download(version) => { root.download_version(version); }
                         copy_link(version) => { root.copy_download_url(version); }
                         open_folder(version) => { root.open_version_folder(version); }
                     }
@@ -346,8 +475,8 @@ export component VersionPage inherits Rectangle {
                         selected: pair.right.version == root.selected_version;
                         downloading: pair.right.version == root.downloading_version;
                         progress: pair.right.version == root.downloading_version ? root.download_progress : 0;
-                        clicked => { root.selected_version = pair.right.version; }
-                        download(version) => { root.selected_version = version; root.download_version(version); }
+                        clicked => { root.selected_version = pair.right.version; root.select_version(pair.right.version); }
+                        download(version) => { root.download_version(version); }
                         copy_link(version) => { root.copy_download_url(version); }
                         open_folder(version) => { root.open_version_folder(version); }
                     }

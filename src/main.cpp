@@ -34,6 +34,8 @@ std::vector<std::string> g_appLogs;
 std::vector<std::string> g_frpcLogs;
 std::wstring g_downloadingVersion;
 int g_downloadProgress = 0;
+bool g_syncingVersions = false;
+std::wstring g_versionSyncStatus;
 bool g_connectionTesting = false;
 std::wstring g_connectionTestStatus = L"尚未测试";
 int g_connectionTestState = 0;
@@ -445,6 +447,8 @@ void RefreshUi(const AppHandle& ui) {
     ui->set_version_pairs(BuildVersionPairs());
     ui->set_downloading_version(S(g_downloadingVersion));
     ui->set_download_progress(g_downloadProgress);
+    ui->set_syncing_versions(g_syncingVersions);
+    ui->set_version_sync_status(S(g_versionSyncStatus));
     ui->set_app_log_text(slint::SharedString(BuildLogText(g_appLogs)));
     ui->set_frpc_log_text(slint::SharedString(BuildLogText(g_frpcLogs)));
     std::vector<DWORD> frpcPids;
@@ -632,10 +636,6 @@ void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWind
             MessageBoxW(nullptr, L"已有版本正在下载，请等待当前下载完成。", L"正在下载", MB_ICONINFORMATION);
             return;
         }
-        if (!requestedVersion.empty()) {
-            g_config.selectedVersion = requestedVersion;
-            SaveConfig(g_config, nullptr);
-        }
         const FrpVersionInfo* version = requestedVersion.empty()
             ? CurrentVersion()
             : FindFrpVersion(g_versions, requestedVersion);
@@ -651,8 +651,6 @@ void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWind
     }
 
     ui->set_status_text("正在下载 frpc");
-    ui->set_selected_version(S(selected.version));
-    ui->set_selected_version_index(VersionIndexFor(selected.version));
     ui->set_downloading_version(S(selected.version));
     ui->set_download_progress(1);
     std::thread([selected, mirror, weak]() {
@@ -694,7 +692,18 @@ void StartDownload(const AppHandle& ui, const slint::ComponentWeakHandle<AppWind
 }
 
 void StartRefreshVersions(const AppHandle& ui, const slint::ComponentWeakHandle<AppWindow>& weak) {
-    ui->set_status_text("正在同步版本");
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        if (g_syncingVersions) {
+            return;
+        }
+        g_syncingVersions = true;
+        g_versionSyncStatus = L"正在同步 GitHub 版本...";
+    }
+    ui->set_syncing_versions(true);
+    ui->set_version_sync_status(S(L"正在同步 GitHub 版本..."));
+    AddAppLog(L"开始同步 GitHub 版本。", weak);
+
     std::thread([weak]() {
         std::vector<FrpVersionInfo> versions;
         std::wstring error;
@@ -705,15 +714,27 @@ void StartRefreshVersions(const AppHandle& ui, const slint::ComponentWeakHandle<
         slint::invoke_from_event_loop([weak, ok, error, versions = std::move(versions)]() mutable {
             if (auto ui = weak.lock()) {
                 if (ok) {
+                    size_t versionCount = versions.size();
+                    std::wstring status = L"同步完成，共 " + std::to_wstring(versionCount) + L" 个版本。";
                     {
                         std::lock_guard<std::mutex> lock(g_stateMutex);
                         g_versions = std::move(versions);
                         const FrpVersionInfo* current = FindFrpVersion(g_versions, g_config.selectedVersion);
                         if (current) g_config.selectedVersion = current->version;
+                        g_syncingVersions = false;
+                        g_versionSyncStatus = status;
                     }
-                    MessageBoxW(nullptr, L"GitHub frp 版本同步完成。", L"frpc-gui", MB_ICONINFORMATION);
+                    AddAppLog(status, weak);
                 } else {
-                    MessageBoxW(nullptr, (L"同步 GitHub 版本失败。\n\n" + error).c_str(), L"同步失败", MB_ICONWARNING);
+                    std::wstring status = error.empty()
+                        ? L"同步失败，请检查网络或稍后重试。"
+                        : (L"同步失败：" + error);
+                    {
+                        std::lock_guard<std::mutex> lock(g_stateMutex);
+                        g_syncingVersions = false;
+                        g_versionSyncStatus = status;
+                    }
+                    AddAppLog(status, weak);
                 }
                 RefreshUi(*ui);
             }
@@ -988,6 +1009,36 @@ void OpenVersionFolder(const slint::SharedString& versionText) {
     }
 }
 
+void SelectVersion(const AppHandle& ui,
+                   const slint::ComponentWeakHandle<AppWindow>& weak,
+                   const slint::SharedString& versionText) {
+    std::wstring version = W(versionText);
+    int index = -1;
+    std::wstring error;
+    {
+        std::lock_guard<std::mutex> lock(g_stateMutex);
+        for (size_t i = 0; i < g_versions.size(); ++i) {
+            if (g_versions[i].version == version) {
+                index = static_cast<int>(i);
+                break;
+            }
+        }
+        if (index < 0) {
+            MessageBoxW(nullptr, L"没有找到该版本配置。", L"切换失败", MB_ICONWARNING);
+            return;
+        }
+        g_config.selectedVersion = version;
+        g_config.downloadMirror = DownloadMirrorFromIndex(ui->get_download_source_index());
+        if (!SaveConfig(g_config, &error)) {
+            MessageBoxW(nullptr, error.c_str(), L"保存失败", MB_ICONERROR);
+            return;
+        }
+    }
+    ui->set_selected_version(S(version));
+    ui->set_selected_version_index(index);
+    AddAppLog(L"当前 frpc 版本已切换为 " + version, weak);
+}
+
 } // namespace
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
@@ -1024,6 +1075,9 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     });
     ui->on_test_frps_connection([ui, weak] { StartConnectionTest(ui, weak); });
     ui->on_sync_versions([ui, weak] { StartRefreshVersions(ui, weak); });
+    ui->on_select_version([ui, weak](slint::SharedString version) {
+        SelectVersion(ui, weak, version);
+    });
     ui->on_download_current([ui, weak] { StartDownload(ui, weak); });
     ui->on_download_version([ui, weak](slint::SharedString version) {
         StartDownload(ui, weak, W(version));

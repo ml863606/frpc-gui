@@ -31,6 +31,8 @@ export component AppWindow inherits Window {
     in property <[VersionPair]> version_pairs;
     in-out property <string> downloading_version: "";
     in-out property <int> download_progress: 0;
+    in-out property <bool> syncing_versions: false;
+    in-out property <string> version_sync_status: "";
     in-out property <string> app_log_text: "";
     in-out property <string> frpc_log_text: "";
     in-out property <int> current_log_tab: 0;
@@ -63,6 +65,7 @@ export component AppWindow inherits Window {
     callback save_frps();
     callback test_frps_connection();
     callback sync_versions();
+    callback select_version(string);
     callback download_current();
     callback download_version(string);
     callback copy_download_url(string);
@@ -207,7 +210,10 @@ export component AppWindow inherits Window {
                 version_pairs: root.version_pairs;
                 downloading_version: root.downloading_version;
                 download_progress: root.download_progress;
+                syncing_versions: root.syncing_versions;
+                sync_status: root.version_sync_status;
                 sync_versions => { root.sync_versions(); }
+                select_version(version) => { root.select_version(version); }
                 download_version(version) => { root.download_version(version); }
                 copy_download_url(version) => { root.copy_download_url(version); }
                 open_version_folder(version) => { root.open_version_folder(version); }
