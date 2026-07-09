@@ -254,8 +254,8 @@ component ProxyCard inherits Rectangle {
         padding-left: 18px;
         padding-right: 18px;
         padding-top: 16px;
-        padding-bottom: 12px;
-        spacing: 11px;
+        padding-bottom: 8px;
+        spacing: 8px;
 
         HorizontalLayout {
             spacing: 10px;
@@ -301,8 +301,6 @@ component ProxyCard inherits Rectangle {
                 value: (root.item.proxy_type == "HTTP" || root.item.proxy_type == "HTTPS") ? "使用 frps HTTP入口" : "0.0.0.0:" + root.item.remote_port;
             }
         }
-
-        Rectangle { vertical-stretch: 1; }
 
         HorizontalLayout {
             spacing: 8px;
