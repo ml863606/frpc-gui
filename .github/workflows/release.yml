@@ -1,0 +1,93 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $header = Get-Content "src/app_version.h" -Raw
+          if ($header -notmatch '#define FRPC_GUI_VERSION_STRING "([^"]+)"') {
+            throw "Cannot read FRPC_GUI_VERSION_STRING from src/app_version.h"
+          }
+          $version = $Matches[1]
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "Version: $version" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $packageName = "frpc-gui-v$version-windows-x64"
+          $packageDir = Join-Path "dist" $packageName
+          $archive = Join-Path "dist" "$packageName.zip"
+
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+          Copy-Item "build/Release/frpc-gui.exe" $packageDir
+          Copy-Item "build/Release/slint_cpp.dll" $packageDir
+          Copy-Item "README.md" $packageDir
+          Compress-Archive -Path "$packageDir/*" -DestinationPath $archive -Force
+
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "Package: $archive" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frpc-gui-v${{ steps.version.outputs.version }}-windows-x64
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+      - name: Check tag
+        id: tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $tags = gh api "repos/${{ github.repository }}/tags?per_page=100" --paginate --jq '.[].name'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot read repository tags"
+          }
+          $exists = $tags -contains $tag
+          "exists=$($exists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          if ($exists) {
+            "Tag $tag already exists; release creation skipped." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Create tag and GitHub Release
+        if: steps.tag.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          gh release create $tag "${{ steps.package.outputs.archive }}" `
+            --repo "${{ github.repository }}" `
+            --target $env:GITHUB_SHA `
+            --title "frpc-gui $tag" `
+            --generate-notes
+          "Published GitHub Release $tag." >> $env:GITHUB_STEP_SUMMARY

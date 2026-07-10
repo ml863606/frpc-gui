@@ -172,6 +172,24 @@ build\Release\frpc-gui.exe
 build\Release\slint_cpp.dll
 ```
 
+## 自动构建与发布
+
+推送到 `main` 分支后，GitHub Actions 会自动：
+
+1. 使用 Visual Studio 2022 编译 Windows x64 Release。
+2. 打包 `frpc-gui.exe`、`slint_cpp.dll` 和 `README.md`。
+3. 上传 ZIP 到本次 Actions 的构建产物。
+4. 从 `src/app_version.h` 读取版本号。
+5. 如果对应的 `v<版本号>` Tag 不存在，自动创建 Tag 和 GitHub Release，并上传 ZIP。
+
+发布新版本前只需要修改：
+
+```cpp
+#define FRPC_GUI_VERSION_STRING "0.1.0"
+```
+
+同时更新该文件中的 major、minor、patch 和 Windows 版本资源对应值。若 Tag 已存在，工作流仍会编译和上传构建产物，但不会重复创建 Release。
+
 ## 技术实现
 
 | 模块 | 实现 |
@@ -202,4 +220,5 @@ resources\
   status-icons\                # 运行状态页图标
   logo\                        # 软件 Logo 和 Windows 图标
 docs\                           # README 界面截图
+.github\workflows\release.yml  # Windows 构建、打包和 Release 发布
 ```
