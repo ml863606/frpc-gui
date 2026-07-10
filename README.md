@@ -176,7 +176,7 @@ build\Release\slint_cpp.dll
 
 推送到 `main` 分支后，GitHub Actions 会自动：
 
-1. 使用 Visual Studio 2022 编译 Windows x64 Release。
+1. 使用 GitHub Windows Runner 上已安装的 Visual Studio 编译 x64 Release。
 2. 打包 `frpc-gui.exe`、`slint_cpp.dll` 和 `README.md`。
 3. 上传 ZIP 到本次 Actions 的构建产物。
 4. 从 `src/app_version.h` 读取版本号。
