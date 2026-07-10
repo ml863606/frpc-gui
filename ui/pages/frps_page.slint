@@ -1,49 +1,47 @@
-import { ComboBox } from "std-widgets.slint";
-
 component ActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <int> state: 0;
     callback clicked();
     height: 40px;
     min-width: 112px;
     horizontal-stretch: 0;
-    background: primary ? #2563eb : #ffffff;
-    border-color: primary ? #2563eb : #cfd8e6;
+    background: primary ? #2563eb : (state == 2 ? #f0fdf4 : (state == 3 ? #fef2f2 : #ffffff));
+    border-color: primary ? #2563eb : (state == 2 ? #86efac : (state == 3 ? #fecaca : #cfd8e6));
     border-width: 1px;
     border-radius: 8px;
 
     Text {
         text: root.text;
-        color: root.primary ? #ffffff : #172033;
+        x: root.state == 2 || root.state == 3 ? 28px : 0px;
+        width: parent.width - (root.state == 2 || root.state == 3 ? 32px : 0px);
+        color: root.primary ? #ffffff : (root.state == 2 ? #166534 : (root.state == 3 ? #991b1b : #172033));
         horizontal-alignment: center;
         vertical-alignment: center;
         font-size: 15px;
         font-weight: 700;
     }
 
+    if root.state == 2 : Image {
+        x: 8px;
+        y: 11px;
+        width: 18px;
+        height: 18px;
+        source: @image-url("../../resources/icons/check.svg");
+    }
+
+    if root.state == 3 : Image {
+        x: 8px;
+        y: 11px;
+        width: 18px;
+        height: 18px;
+        source: @image-url("../../resources/icons/x.svg");
+    }
+
     TouchArea {
         width: parent.width;
         height: parent.height;
         clicked => { root.clicked(); }
-    }
-}
-
-component InfoPill inherits Rectangle {
-    in property <string> text;
-    in property <color> bg: #edf4ff;
-    in property <color> fg: #1d4ed8;
-    height: 28px;
-    min-width: 78px;
-    background: bg;
-    border-radius: 14px;
-
-    Text {
-        text: root.text;
-        color: root.fg;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: 13px;
-        font-weight: 700;
     }
 }
 
@@ -77,12 +75,6 @@ component FormLabel inherits Text {
     color: #334155;
     font-size: 13px;
     font-weight: 800;
-}
-
-component HelpText inherits Text {
-    color: #64748b;
-    font-size: 13px;
-    wrap: word-wrap;
 }
 
 component FieldGroup inherits VerticalLayout {
@@ -124,56 +116,14 @@ component StyledTextField inherits Rectangle {
     }
 }
 
-component InputShell inherits Rectangle {
-    height: 40px;
-    background: #f8fafc;
-    border-color: #cbd5e1;
-    border-width: 1px;
-    border-radius: 8px;
-}
-
-component SummaryLine inherits HorizontalLayout {
-    in property <string> label;
-    in property <string> value;
-    spacing: 10px;
-
-    Text {
-        text: root.label;
-        width: 74px;
-        color: #64748b;
-        font-size: 13px;
-        font-weight: 700;
-        vertical-alignment: center;
-    }
-
-    Text {
-        text: root.value;
-        color: #0f172a;
-        font-size: 15px;
-        font-weight: 800;
-        vertical-alignment: center;
-        wrap: word-wrap;
-    }
-}
-
-component SettingsCard inherits Rectangle {
-    height: 326px;
-    background: #ffffff;
-    border-color: #dbe3ee;
-    border-width: 1px;
-    border-radius: 10px;
-}
-
 export component FrpsPage inherits Rectangle {
-    in-out property <string> selected_version;
-    in property <[string]> frpc_version_options;
-    in-out property <int> selected_version_index;
     in-out property <string> frps_public_ip;
     in-out property <int> frps_port;
     in-out property <string> frps_port_text;
     in property <string> connection_test_status;
     in property <bool> connection_testing;
     in property <int> connection_test_state;
+    in-out property <bool> save_feedback_visible: false;
     in-out property <int> auth_method_index;
     in-out property <string> auth_token;
     callback save_frps();
@@ -189,279 +139,145 @@ export component FrpsPage inherits Rectangle {
         spacing: 18px;
         alignment: start;
 
-        HorizontalLayout {
-            spacing: 16px;
-            VerticalLayout {
-                spacing: 6px;
-                Text { text: "frps设置"; font-size: 30px; font-weight: 800; color: #0f172a; }
-                Text {
-                    text: "设置公网 frps 入口、鉴权方式，以及当前运行使用的 frpc 版本。";
-                    color: #64748b;
-                    font-size: 15px;
-                    wrap: word-wrap;
-                }
-            }
-            Rectangle { horizontal-stretch: 1; }
-            InfoPill {
-                text: root.auth_method_index == 1 ? "token鉴权" : "无鉴权";
-                bg: root.auth_method_index == 1 ? #fef3c7 : #dcfce7;
-                fg: root.auth_method_index == 1 ? #92400e : #166534;
+        VerticalLayout {
+            spacing: 6px;
+            Text { text: "frps设置"; font-size: 30px; font-weight: 800; color: #0f172a; }
+            Text {
+                text: "设置公网 frps 入口和鉴权方式。";
+                color: #64748b;
+                font-size: 15px;
+                wrap: word-wrap;
             }
         }
 
-        HorizontalLayout {
-            spacing: 14px;
+        Rectangle { width: 640px; height: 1px; background: #dbe3ee; }
 
-            SettingsCard {
-                width: 342px;
+        VerticalLayout {
+            width: 640px;
+            spacing: 15px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                FieldGroup {
+                    width: root.width >= 760px ? 160px : 120px;
+                    label: "公网 IP / 域名";
+                    StyledTextField {
+                        width: parent.width;
+                        text <=> root.frps_public_ip;
+                        placeholder: "例如 1.2.3.4 或 frps.example.com";
+                    }
+                }
+
+                FieldGroup {
+                    width: 110px;
+                    label: "服务端端口";
+                    StyledTextField {
+                        width: 110px;
+                        text <=> root.frps_port_text;
+                        placeholder: "7000";
+                    }
+                }
 
                 VerticalLayout {
-                    padding: 18px;
-                    spacing: 14px;
-                    alignment: start;
-
-                    HorizontalLayout {
-                        spacing: 12px;
-                        Rectangle {
-                            width: 42px;
-                            height: 42px;
-                            background: #e0f2fe;
-                            border-radius: 8px;
-                            Text {
-                                text: "frps";
-                                color: #0369a1;
-                                font-size: 12px;
-                                font-weight: 800;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "服务端连接"; color: #0f172a; font-size: 20px; font-weight: 800; }
-                            HelpText { text: "公网 IP 可填写域名，端口范围 1-65535。"; }
-                        }
-                    }
-
-                    Rectangle { height: 1px; background: #edf2f7; }
-
-                    FieldGroup {
-                        label: "公网 IP / 域名";
-                        StyledTextField {
-                            text <=> root.frps_public_ip;
-                            placeholder: "例如 1.2.3.4 或 frps.example.com";
-                            width: 306px;
-                        }
-                    }
-
-                    FieldGroup {
-                        label: "服务端端口";
-                        HorizontalLayout {
-                            spacing: 10px;
-                            StyledTextField {
-                                text <=> root.frps_port_text;
-                                placeholder: "7000";
-                                width: 156px;
-                            }
-                            ActionButton {
-                                text: root.connection_testing ? "测试中..." : "测试连通性";
-                                primary: false;
-                                width: 120px;
-                                clicked => { root.test_frps_connection(); }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: 306px;
-                        height: 42px;
-                        background: root.connection_test_state == 2 ? #f0fdf4 : (root.connection_test_state == 3 ? #fef2f2 : (root.connection_testing ? #eff6ff : #f8fafc));
-                        border-color: root.connection_test_state == 2 ? #86efac : (root.connection_test_state == 3 ? #fecaca : (root.connection_testing ? #bfdbfe : #e2e8f0));
-                        border-width: 1px;
-                        border-radius: 8px;
-
-                        if root.connection_test_state != 0 : Rectangle {
-                            x: 12px;
-                            y: 10px;
-                            width: 22px;
-                            height: 22px;
-                            background: root.connection_test_state == 2 ? #22c55e : (root.connection_test_state == 3 ? #ef4444 : #3b82f6);
-                            border-radius: 11px;
-
-                            Text {
-                                text: root.connection_test_state == 2 ? "✓" : (root.connection_test_state == 3 ? "X" : "...");
-                                color: #ffffff;
-                                font-size: root.connection_test_state == 1 ? 10px : 14px;
-                                font-weight: 900;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-
-                        Text {
-                            x: root.connection_test_state == 0 ? 12px : 42px;
-                            y: 0px;
-                            width: parent.width - (root.connection_test_state == 0 ? 24px : 54px);
-                            height: parent.height;
-                            text: root.connection_test_status;
-                            color: root.connection_test_state == 2 ? #166534 : (root.connection_test_state == 3 ? #991b1b : (root.connection_testing ? #1d4ed8 : #475569));
-                            font-size: 13px;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
-            }
-
-            SettingsCard {
-                width: 342px;
-
-                VerticalLayout {
-                    padding: 18px;
-                    spacing: 14px;
-                    alignment: start;
-
-                    HorizontalLayout {
-                        spacing: 12px;
-                        Rectangle {
-                            width: 42px;
-                            height: 42px;
-                            background: #eef5ff;
-                            border-radius: 8px;
-                            Text {
-                                text: "auth";
-                                color: #1d4ed8;
-                                font-size: 12px;
-                                font-weight: 800;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 4px;
-                            Text { text: "访问鉴权"; color: #0f172a; font-size: 20px; font-weight: 800; }
-                            HelpText { text: "默认不鉴权；选择 token 后会写入 [auth] 配置。"; }
-                        }
-                    }
-
-                    Rectangle { height: 1px; background: #edf2f7; }
-
-                    FieldGroup {
-                        label: "鉴权方式";
-                        HorizontalLayout {
-                            spacing: 8px;
-                            SegmentButton {
-                                text: "无鉴权";
-                                active: root.auth_method_index == 0;
-                                width: 112px;
-                                clicked => { root.auth_method_index = 0; }
-                            }
-                            SegmentButton {
-                                text: "token";
-                                active: root.auth_method_index == 1;
-                                width: 112px;
-                                clicked => { root.auth_method_index = 1; }
-                            }
-                        }
-                    }
-
-                    if root.auth_method_index == 1 : FieldGroup {
-                        label: "Token";
-                        StyledTextField {
-                            text <=> root.auth_token;
-                            placeholder: "输入 frps token";
-                            width: 306px;
-                        }
-                    }
-
-                    if root.auth_method_index == 0 : Rectangle {
-                        height: 62px;
-                        width: 306px;
-                        background: #f8fafc;
-                        border-color: #e2e8f0;
-                        border-width: 1px;
-                        border-radius: 8px;
-                        Text {
-                            x: 14px;
-                            y: 13px;
-                            width: parent.width - 28px;
-                            text: "当前不会生成 [auth] 段。";
-                            color: #64748b;
-                            font-size: 14px;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
-            }
-        }
-
-        SettingsCard {
-            height: 188px;
-
-            VerticalLayout {
-                padding: 18px;
-                spacing: 14px;
-                alignment: start;
-
-                HorizontalLayout {
-                    spacing: 12px;
-                    Rectangle {
-                        width: 42px;
-                        height: 42px;
-                        background: #dcfce7;
-                        border-radius: 8px;
-                        Text {
-                            text: "frpc";
-                            color: #166534;
-                            font-size: 12px;
-                            font-weight: 800;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    VerticalLayout {
-                        spacing: 4px;
-                        Text { text: "运行版本"; color: #0f172a; font-size: 20px; font-weight: 800; }
-                        HelpText { text: "下拉列表来自 frp版本管理 中的版本汇总文件。"; }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    InfoPill { text: "当前 " + root.selected_version; bg: #eaf1ff; fg: #1d4ed8; }
-                }
-
-                Rectangle { height: 1px; background: #edf2f7; }
-
-                HorizontalLayout {
-                    spacing: 16px;
-                    FieldGroup {
-                        label: "选择 frpc 版本";
-                        InputShell {
-                            width: 220px;
-                            ComboBox {
-                                x: 1px;
-                                y: 1px;
-                                width: parent.width - 2px;
-                                height: parent.height - 2px;
-                                model: root.frpc_version_options;
-                                current-index <=> root.selected_version_index;
-                            }
-                        }
-                    }
-
-                    VerticalLayout {
-                        spacing: 7px;
-                        FormLabel { text: "保存后生效"; }
-                        SummaryLine { label: "配置版本"; value: root.selected_version; }
-                        SummaryLine { label: "frps"; value: (root.frps_public_ip == "" ? "未填写" : root.frps_public_ip) + ":" + root.frps_port_text; }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
+                    width: 130px;
+                    spacing: 7px;
+                    Rectangle { height: 16px; background: transparent; }
                     ActionButton {
-                        text: "保存设置";
-                        primary: true;
-                        width: 116px;
-                        clicked => { root.save_frps(); }
+                        width: 130px;
+                        text: root.connection_testing ? "测试中..." : "测试连通性";
+                        state: root.connection_test_state;
+                        clicked => { root.test_frps_connection(); }
                     }
                 }
+            }
+
+            FieldGroup {
+                width: 640px;
+                label: "鉴权方式";
+                HorizontalLayout {
+                    spacing: 8px;
+                    SegmentButton {
+                        text: "无鉴权";
+                        active: root.auth_method_index == 0;
+                        width: 112px;
+                        clicked => { root.auth_method_index = 0; }
+                    }
+                    SegmentButton {
+                        text: "token";
+                        active: root.auth_method_index == 1;
+                        width: 112px;
+                        clicked => { root.auth_method_index = 1; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            if root.auth_method_index == 1 : FieldGroup {
+                width: 386px;
+                label: "Token";
+                StyledTextField {
+                    width: 386px;
+                    text <=> root.auth_token;
+                    placeholder: "输入 frps token";
+                }
+            }
+
+            Rectangle { width: 640px; height: 1px; background: #dbe3ee; }
+
+            HorizontalLayout {
+                width: 640px;
+                Rectangle { horizontal-stretch: 1; }
+                ActionButton {
+                    text: "保存设置";
+                    primary: true;
+                    width: 116px;
+                    clicked => { root.save_frps(); }
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 1600ms;
+        running: root.save_feedback_visible;
+        triggered => { root.save_feedback_visible = false; }
+    }
+
+    if root.save_feedback_visible : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 20px;
+        width: 142px;
+        height: 38px;
+        background: #166534;
+        border-radius: 8px;
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 7px;
+            alignment: center;
+
+            Rectangle {
+                width: 18px;
+                height: parent.height;
+                background: transparent;
+
+                Image {
+                    x: 0px;
+                    y: (parent.height - self.height) / 2;
+                    width: 18px;
+                    height: 18px;
+                    source: @image-url("../../resources/icons/check.svg");
+                }
+            }
+            Text {
+                text: "设置已保存";
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 800;
+                vertical-alignment: center;
             }
         }
     }

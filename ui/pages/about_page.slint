@@ -1,0 +1,235 @@
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 40px;
+    horizontal-stretch: 0;
+    background: !enabled ? #e2e8f0 : (primary ? #2563eb : #ffffff);
+    border-color: !enabled ? #cbd5e1 : (primary ? #2563eb : #cfd8e6);
+    border-width: 1px;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        x: 14px;
+        width: parent.width - 28px;
+        height: parent.height;
+        spacing: 7px;
+        alignment: center;
+
+        Rectangle {
+            width: 16px;
+            height: parent.height;
+            background: transparent;
+            Image {
+                x: 0px;
+                y: (parent.height - self.height) / 2;
+                width: 16px;
+                height: 16px;
+                source: root.icon;
+                colorize: root.primary ? #ffffff : #243047;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.primary ? #ffffff : (root.enabled ? #172033 : #64748b);
+            font-size: 14px;
+            font-weight: 800;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.enabled : TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
+component DetailRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    width: 620px;
+    height: 34px;
+    spacing: 18px;
+
+    Text {
+        text: root.label;
+        width: 110px;
+        color: #64748b;
+        font-size: 14px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: #0f172a;
+        font-size: 15px;
+        font-weight: 800;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component AboutPage inherits Rectangle {
+    in property <string> app_version;
+    in property <string> selected_frpc_version;
+    in property <bool> update_checking;
+    in property <int> update_state;
+    in property <string> update_status;
+    in property <string> latest_version;
+    callback open_repository();
+    callback check_update();
+    callback open_release();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: 32px;
+        padding-right: 32px;
+        padding-top: 28px;
+        padding-bottom: 24px;
+        spacing: 20px;
+        alignment: start;
+
+        VerticalLayout {
+            spacing: 6px;
+            Text { text: "关于"; font-size: 30px; font-weight: 800; color: #0f172a; }
+            Text { text: "frpc-gui 项目信息与版本更新。"; color: #64748b; font-size: 15px; }
+        }
+
+        Rectangle { width: 650px; height: 1px; background: #dbe3ee; }
+
+        HorizontalLayout {
+            width: 650px;
+            height: 92px;
+            spacing: 20px;
+
+            Image {
+                width: 82px;
+                height: 82px;
+                source: @image-url("../../resources/logo/frpc-gui.svg");
+            }
+            VerticalLayout {
+                spacing: 7px;
+                alignment: center;
+                Text { text: "frpc-gui"; color: #0f172a; font-size: 28px; font-weight: 800; }
+                Text { text: "Windows frp 客户端"; color: #64748b; font-size: 14px; }
+                Text { text: "v" + root.app_version; color: #2563eb; font-size: 14px; font-weight: 800; }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        Rectangle { width: 650px; height: 1px; background: #dbe3ee; }
+
+        VerticalLayout {
+            width: 650px;
+            spacing: 6px;
+            DetailRow { label: "软件版本"; value: "v" + root.app_version; }
+            DetailRow { label: "frpc 版本"; value: "v" + root.selected_frpc_version; }
+            HorizontalLayout {
+                width: 650px;
+                height: 40px;
+                spacing: 18px;
+                Text {
+                    text: "开源地址";
+                    width: 110px;
+                    color: #64748b;
+                    font-size: 14px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "github.com/ml863606/frpc-gui.git";
+                    color: #2563eb;
+                    font-size: 14px;
+                    font-weight: 800;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                ActionButton {
+                    text: "打开 GitHub";
+                    icon: @image-url("../../resources/icons/external-link.svg");
+                    width: 132px;
+                    clicked => { root.open_repository(); }
+                }
+            }
+        }
+
+        Rectangle { width: 650px; height: 1px; background: #dbe3ee; }
+
+        VerticalLayout {
+            width: 650px;
+            spacing: 12px;
+            Text { text: "版本更新"; color: #0f172a; font-size: 18px; font-weight: 800; }
+
+            HorizontalLayout {
+                width: 650px;
+                height: 42px;
+                spacing: 10px;
+
+                Rectangle {
+                    width: 26px;
+                    height: parent.height;
+                    background: transparent;
+
+                    if root.update_state == 1 : Text {
+                        text: "...";
+                        color: #2563eb;
+                        font-size: 13px;
+                        font-weight: 900;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    if root.update_state == 2 : Image {
+                        x: 1px; y: 9px; width: 24px; height: 24px;
+                        source: @image-url("../../resources/icons/check.svg");
+                    }
+                    if root.update_state == 3 : Image {
+                        x: 2px; y: 10px; width: 22px; height: 22px;
+                        source: @image-url("../../resources/icons/download.svg");
+                    }
+                    if root.update_state == 4 : Image {
+                        x: 1px; y: 9px; width: 24px; height: 24px;
+                        source: @image-url("../../resources/icons/x.svg");
+                    }
+                    if root.update_state == 5 : Image {
+                        x: 1px; y: 9px; width: 24px; height: 24px;
+                        source: @image-url("../../resources/icons/info.svg");
+                    }
+                }
+
+                Text {
+                    text: root.update_status;
+                    color: root.update_state == 2 ? #166534 : (root.update_state == 3 ? #1d4ed8 : (root.update_state == 4 ? #991b1b : #475569));
+                    font-size: 14px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            HorizontalLayout {
+                width: 650px;
+                spacing: 10px;
+                ActionButton {
+                    text: root.update_checking ? "检查中..." : "检查更新";
+                    icon: @image-url("../../resources/icons/refresh-cw.svg");
+                    primary: true;
+                    enabled: !root.update_checking;
+                    width: 126px;
+                    clicked => { root.check_update(); }
+                }
+                if root.update_state == 3 : ActionButton {
+                    text: "查看新版本";
+                    icon: @image-url("../../resources/icons/external-link.svg");
+                    width: 136px;
+                    clicked => { root.open_release(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}

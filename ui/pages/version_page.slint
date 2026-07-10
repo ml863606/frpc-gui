@@ -203,7 +203,7 @@ component VersionCard inherits Rectangle {
     in property <bool> selected;
     in property <bool> downloading;
     in property <int> progress;
-    callback clicked();
+    callback use_version(string);
     callback download(string);
     callback copy_link(string);
     callback open_folder(string);
@@ -213,12 +213,6 @@ component VersionCard inherits Rectangle {
     border-width: selected ? 2px : 1px;
     border-radius: 10px;
     clip: true;
-
-    TouchArea {
-        width: parent.width;
-        height: parent.height;
-        clicked => { root.clicked(); }
-    }
 
     VerticalLayout {
         padding-left: 18px;
@@ -269,11 +263,27 @@ component VersionCard inherits Rectangle {
 
             Rectangle { horizontal-stretch: 1; }
 
-            InfoPill {
+            Rectangle {
                 width: 82px;
-                text: root.downloading ? "下载中" : (root.item.installed ? "已下载" : (root.selected ? "当前选中" : "未下载"));
-                bg: root.downloading ? #fef3c7 : (root.item.installed ? #dcfce7 : (root.selected ? #dbeafe : #f1f5f9));
-                fg: root.downloading ? #92400e : (root.item.installed ? #166534 : (root.selected ? #1d4ed8 : #475569));
+                height: 28px;
+                background: transparent;
+
+                InfoPill {
+                    width: parent.width;
+                    text: root.downloading ? "下载中" : (root.selected ? "当前使用" : (root.item.installed ? "设为使用" : "未下载"));
+                    bg: root.downloading ? #fef3c7 : (root.selected ? #dcfce7 : (root.item.installed ? (version_touch.has-hover ? #dbeafe : #eaf1ff) : #f1f5f9));
+                    fg: root.downloading ? #92400e : (root.selected ? #166534 : (root.item.installed ? #1d4ed8 : #475569));
+                }
+
+                version_touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => {
+                        if root.item.installed && !root.downloading && !root.selected {
+                            root.use_version(root.item.version);
+                        }
+                    }
+                }
             }
         }
 
@@ -464,7 +474,7 @@ export component VersionPage inherits Rectangle {
                         selected: pair.left.version == root.selected_version;
                         downloading: pair.left.version == root.downloading_version;
                         progress: pair.left.version == root.downloading_version ? root.download_progress : 0;
-                        clicked => { root.selected_version = pair.left.version; root.select_version(pair.left.version); }
+                        use_version(version) => { root.selected_version = version; root.select_version(version); }
                         download(version) => { root.download_version(version); }
                         copy_link(version) => { root.copy_download_url(version); }
                         open_folder(version) => { root.open_version_folder(version); }
@@ -475,7 +485,7 @@ export component VersionPage inherits Rectangle {
                         selected: pair.right.version == root.selected_version;
                         downloading: pair.right.version == root.downloading_version;
                         progress: pair.right.version == root.downloading_version ? root.download_progress : 0;
-                        clicked => { root.selected_version = pair.right.version; root.select_version(pair.right.version); }
+                        use_version(version) => { root.selected_version = version; root.select_version(version); }
                         download(version) => { root.download_version(version); }
                         copy_link(version) => { root.copy_download_url(version); }
                         open_folder(version) => { root.open_version_folder(version); }

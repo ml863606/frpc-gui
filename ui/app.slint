@@ -4,12 +4,14 @@ import { ProxyPage, ProxyPair } from "pages/proxy_page.slint";
 import { VersionPage, VersionPair } from "pages/version_page.slint";
 import { FrpsPage } from "pages/frps_page.slint";
 import { LogPage } from "pages/log_page.slint";
+import { AboutPage } from "pages/about_page.slint";
 
 export component AppWindow inherits Window {
     title: "frpc-gui";
     width: 1040px;
     height: 720px;
     background: #f4f7fb;
+    property <length> sidebar_width: 204px;
 
     in-out property <int> current_page: 0;
     in-out property <string> status_text: "未运行";
@@ -22,6 +24,7 @@ export component AppWindow inherits Window {
     in-out property <string> connection_test_status: "尚未测试";
     in-out property <bool> connection_testing: false;
     in-out property <int> connection_test_state: 0;
+    in-out property <bool> frps_save_feedback_visible: false;
     in-out property <int> auth_method_index: 0;
     in-out property <string> auth_token: "";
     in-out property <string> download_mirror: "https://gh.zwy.one";
@@ -36,6 +39,11 @@ export component AppWindow inherits Window {
     in-out property <string> app_log_text: "";
     in-out property <string> frpc_log_text: "";
     in-out property <int> current_log_tab: 0;
+    in-out property <string> app_version: "0.1.0";
+    in-out property <bool> app_update_checking: false;
+    in-out property <int> app_update_state: 0;
+    in-out property <string> app_update_status: "尚未检查更新";
+    in-out property <string> latest_app_version: "";
 
     in-out property <bool> show_add_proxy: false;
     in-out property <int> add_proxy_type_index: 0;
@@ -59,6 +67,8 @@ export component AppWindow inherits Window {
     in-out property <int> edit_proxy_local_test_state: 0;
     in-out property <int> edit_proxy_remote_test_state: 0;
     in-out property <int> service_state: 0;
+    in-out property <int> active_proxy_count: 0;
+    in-out property <string> active_proxy_names: "服务未启动";
 
     callback start_service();
     callback stop_service();
@@ -72,11 +82,17 @@ export component AppWindow inherits Window {
     callback open_version_folder(string);
     callback add_proxy(int, string, string, string, string);
     callback edit_proxy(int, int, string, string, string, string);
+    callback clone_proxy(int);
     callback delete_proxy(int);
     callback toggle_proxy(int);
     callback test_proxy(int);
     callback test_proxy_input(int, string, string, string);
+    callback copy_remote_address(string, int);
+    callback open_remote_address(string, int, string);
     callback clear_current_log(int);
+    callback open_repository();
+    callback check_app_update();
+    callback open_app_release();
 
     Rectangle {
         width: parent.width;
@@ -86,7 +102,7 @@ export component AppWindow inherits Window {
         Rectangle {
             x: 0px;
             y: 0px;
-            width: 244px;
+            width: root.sidebar_width;
             height: parent.height;
             background: #ffffff;
             border-color: #e2e8f0;
@@ -109,41 +125,36 @@ export component AppWindow inherits Window {
                 color: #0f172a;
             }
 
-            Text {
-                x: 72px;
-                y: 68px;
-                text: "轻量 frp 客户端";
-                color: #64748b;
-                font-size: 14px;
-            }
-
             Rectangle {
                 x: 24px;
                 y: 108px;
-                width: 196px;
+                width: parent.width - 48px;
                 height: 1px;
                 background: #e2e8f0;
             }
 
-            NavButton { x: 22px; y: 130px; width: 200px; icon: @image-url("../resources/icons/status.svg"); text: "运行状态"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
-            NavButton { x: 22px; y: 184px; width: 200px; icon: @image-url("../resources/icons/proxy.svg"); text: "代理设置"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
-            NavButton { x: 22px; y: 238px; width: 200px; icon: @image-url("../resources/icons/versions.svg"); text: "frp版本管理"; active: root.current_page == 2; clicked => { root.current_page = 2; } }
-            NavButton { x: 22px; y: 292px; width: 200px; icon: @image-url("../resources/icons/server.svg"); text: "frps设置"; active: root.current_page == 3; clicked => { root.current_page = 3; } }
-            NavButton { x: 22px; y: 346px; width: 200px; icon: @image-url("../resources/icons/logs.svg"); text: "日志界面"; active: root.current_page == 4; clicked => { root.current_page = 4; } }
+            NavButton { x: 22px; y: 130px; width: 160px; icon: @image-url("../resources/icons/status.svg"); text: "运行状态"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
+            NavButton { x: 22px; y: 184px; width: 160px; icon: @image-url("../resources/icons/proxy.svg"); text: "代理设置"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
+            NavButton { x: 22px; y: 238px; width: 160px; icon: @image-url("../resources/icons/versions.svg"); text: "frp版本管理"; active: root.current_page == 2; clicked => { root.current_page = 2; } }
+            NavButton { x: 22px; y: 292px; width: 160px; icon: @image-url("../resources/icons/server.svg"); text: "frps设置"; active: root.current_page == 3; clicked => { root.current_page = 3; } }
+            NavButton { x: 22px; y: 346px; width: 160px; icon: @image-url("../resources/icons/logs.svg"); text: "日志界面"; active: root.current_page == 4; clicked => { root.current_page = 4; } }
+            NavButton { x: 22px; y: 400px; width: 160px; icon: @image-url("../resources/icons/info.svg"); text: "关于"; active: root.current_page == 5; clicked => { root.current_page = 5; } }
 
-            Text {
+            VerticalLayout {
                 x: 28px;
-                y: parent.height - 48px;
-                text: "frpc 按版本独立维护";
-                color: #94a3b8;
-                font-size: 13px;
+                y: parent.height - 72px;
+                width: parent.width - 44px;
+                height: 48px;
+                spacing: 3px;
+                Text { text: "软件 v" + root.app_version; color: #64748b; font-size: 12px; font-weight: 700; }
+                Text { text: "frpc v" + root.selected_version; color: #94a3b8; font-size: 12px; overflow: elide; }
             }
         }
 
         Rectangle {
-            x: 244px;
+            x: root.sidebar_width;
             y: 0px;
-            width: parent.width - 244px;
+            width: parent.width - root.sidebar_width;
             height: parent.height;
             background: #f4f7fb;
 
@@ -155,6 +166,8 @@ export component AppWindow inherits Window {
                 selected_version: root.selected_version;
                 frps_public_ip: root.frps_public_ip;
                 frps_port: root.frps_port;
+                active_proxy_count: root.active_proxy_count;
+                active_proxy_names: root.active_proxy_names;
                 start_service => { root.start_service(); }
                 stop_service => { root.stop_service(); }
             }
@@ -164,6 +177,7 @@ export component AppWindow inherits Window {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 proxy_pairs: root.proxy_pairs;
                 proxy_count: root.proxy_count;
+                frps_public_ip: root.frps_public_ip;
                 show_add_proxy <=> root.show_add_proxy;
                 add_proxy_type_index <=> root.add_proxy_type_index;
                 add_proxy_name <=> root.add_proxy_name;
@@ -187,6 +201,7 @@ export component AppWindow inherits Window {
                 edit_proxy(index, type_index, name, local_ip, local_port, remote_port) => {
                     root.edit_proxy(index, type_index, name, local_ip, local_port, remote_port);
                 }
+                clone_proxy(index) => { root.clone_proxy(index); }
                 delete_proxy(index) => {
                     root.delete_proxy(index);
                 }
@@ -199,6 +214,8 @@ export component AppWindow inherits Window {
                 test_proxy_input(mode, local_ip, local_port, remote_port) => {
                     root.test_proxy_input(mode, local_ip, local_port, remote_port);
                 }
+                copy_remote_address(host, port) => { root.copy_remote_address(host, port); }
+                open_remote_address(host, port, proxy_type) => { root.open_remote_address(host, port, proxy_type); }
             }
 
             VersionPage {
@@ -222,15 +239,13 @@ export component AppWindow inherits Window {
             FrpsPage {
                 visible: root.current_page == 3;
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
-                selected_version <=> root.selected_version;
-                frpc_version_options: root.frpc_version_options;
-                selected_version_index <=> root.selected_version_index;
                 frps_public_ip <=> root.frps_public_ip;
                 frps_port <=> root.frps_port;
                 frps_port_text <=> root.frps_port_text;
                 connection_test_status: root.connection_test_status;
                 connection_testing: root.connection_testing;
                 connection_test_state: root.connection_test_state;
+                save_feedback_visible <=> root.frps_save_feedback_visible;
                 auth_method_index <=> root.auth_method_index;
                 auth_token <=> root.auth_token;
                 save_frps => { root.save_frps(); }
@@ -244,6 +259,20 @@ export component AppWindow inherits Window {
                 app_log_text: root.app_log_text;
                 frpc_log_text: root.frpc_log_text;
                 clear_current_log(tab) => { root.clear_current_log(tab); }
+            }
+
+            AboutPage {
+                visible: root.current_page == 5;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                app_version: root.app_version;
+                selected_frpc_version: root.selected_version;
+                update_checking: root.app_update_checking;
+                update_state: root.app_update_state;
+                update_status: root.app_update_status;
+                latest_version: root.latest_app_version;
+                open_repository => { root.open_repository(); }
+                check_update => { root.check_app_update(); }
+                open_release => { root.open_app_release(); }
             }
         }
     }

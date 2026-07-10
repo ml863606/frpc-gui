@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 project(frpc-gui LANGUAGES CXX RC)
 
@@ -8,6 +8,7 @@ set(SLINT_STYLE fluent CACHE STRING "Slint widget style")
 
 add_executable(frpc-gui WIN32
     src/main.cpp
+    src/app_update.cpp
     src/config.cpp
     src/version_manager.cpp
     src/frpc_manager.cpp
@@ -43,4 +44,8 @@ add_custom_command(TARGET frpc-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/slint/1.16.0/lib/slint_cpp.dll"
         "$<TARGET_FILE_DIR:frpc-gui>/slint_cpp.dll"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_RUNTIME_DLLS:frpc-gui>
+        "$<TARGET_FILE_DIR:frpc-gui>"
+    COMMAND_EXPAND_LISTS
 )

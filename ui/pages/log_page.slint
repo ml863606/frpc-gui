@@ -1,4 +1,4 @@
-import { ScrollView, TextEdit } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -51,7 +51,7 @@ export component LogPage inherits Rectangle {
     in property <string> frpc_log_text;
     callback clear_current_log(int);
 
-    background: transparent;
+    background: #f4f7fb;
 
     VerticalLayout {
         padding-left: 32px;
@@ -113,33 +113,26 @@ export component LogPage inherits Rectangle {
             border-width: 1px;
             border-radius: 10px;
 
-            ScrollView {
-                x: 0px;
-                y: 0px;
-                width: parent.width;
-                height: parent.height;
-                viewport-width: parent.width;
-                viewport-height: parent.height;
+            log-scroll := ScrollView {
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, log-input.preferred-height);
 
-                Text {
+                log-input := TextInput {
                     text: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? "暂无日志" : (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text);
                     color: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? #94a3b8 : #111827;
                     font-size: 13px;
                     font-family: "Consolas";
+                    read-only: true;
+                    single-line: false;
                     wrap: word-wrap;
+                    selection-background-color: #bfdbfe;
+                    selection-foreground-color: #0f172a;
+                    page-height: log-scroll.visible-height;
                 }
-            }
-
-            log-input := TextEdit {
-                x: 0px;
-                y: 0px;
-                width: parent.width;
-                height: parent.height;
-                text: (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text) == "" ? "暂无日志" : (root.current_tab == 0 ? root.app_log_text : root.frpc_log_text);
-                font-size: 13px;
-                font-family: "Consolas";
-                read-only: true;
-                opacity: log-input.has-focus ? 1 : 0;
             }
         }
     }

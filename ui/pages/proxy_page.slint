@@ -9,6 +9,8 @@ export struct ProxyRow {
     local_port: int,
     remote_port: int,
     enabled: bool,
+    local_test_state: int,
+    remote_test_state: int,
 }
 
 export struct ProxyPair {
@@ -20,18 +22,19 @@ export struct ProxyPair {
 component ActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <bool> danger: false;
     callback clicked();
     height: 40px;
     min-width: 132px;
     horizontal-stretch: 0;
-    background: primary ? #2563eb : #ffffff;
-    border-color: primary ? #2563eb : #cfd8e6;
+    background: primary ? #2563eb : (danger ? #dc2626 : #ffffff);
+    border-color: primary ? #2563eb : (danger ? #dc2626 : #cfd8e6);
     border-width: 1px;
     border-radius: 8px;
 
     Text {
         text: root.text;
-        color: root.primary ? #ffffff : #172033;
+        color: root.primary || root.danger ? #ffffff : #172033;
         horizontal-alignment: center;
         vertical-alignment: center;
         font-size: 15px;
@@ -88,6 +91,31 @@ component SmallButton inherits Rectangle {
     TouchArea { width: parent.width; height: parent.height; clicked => { root.clicked(); } }
 }
 
+component IconButton inherits Rectangle {
+    in property <image> icon;
+    callback clicked();
+    width: 26px;
+    height: 26px;
+    background: touch.has-hover ? #eef5ff : #ffffff;
+    border-color: #cfd8e6;
+    border-width: 1px;
+    border-radius: 6px;
+
+    Image {
+        x: 6px;
+        y: 6px;
+        width: 14px;
+        height: 14px;
+        source: root.icon;
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { root.clicked(); }
+    }
+}
+
 component InfoPill inherits Rectangle {
     in property <string> text;
     in property <color> bg: #edf4ff;
@@ -138,6 +166,38 @@ component TestMark inherits Rectangle {
         y: 7px;
         width: 24px;
         height: 24px;
+        source: @image-url("../../resources/icons/x.svg");
+    }
+}
+
+component InlineTestMark inherits Rectangle {
+    in property <int> state;
+    width: 20px;
+    height: 26px;
+    background: transparent;
+
+    if root.state == 1 : Text {
+        text: "...";
+        color: #2563eb;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 11px;
+        font-weight: 900;
+    }
+
+    if root.state == 2 : Image {
+        x: 2px;
+        y: 5px;
+        width: 16px;
+        height: 16px;
+        source: @image-url("../../resources/icons/check.svg");
+    }
+
+    if root.state == 3 : Image {
+        x: 2px;
+        y: 5px;
+        width: 16px;
+        height: 16px;
         source: @image-url("../../resources/icons/x.svg");
     }
 }
@@ -218,32 +278,85 @@ component InputShell inherits Rectangle {
 component FieldLine inherits HorizontalLayout {
     in property <string> label;
     in property <string> value;
-    spacing: 10px;
+    in property <int> test_state;
+    spacing: 8px;
 
-    Text {
-        text: root.label;
-        width: 64px;
-        color: #64748b;
-        font-size: 13px;
-        font-weight: 700;
-        vertical-alignment: center;
+    HorizontalLayout {
+        width: 52px;
+        height: 26px;
+        spacing: 2px;
+        Text {
+            text: root.label;
+            width: 30px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        InlineTestMark { state: root.test_state; }
     }
     Text {
         text: root.value;
+        horizontal-stretch: 1;
         color: #0f172a;
         font-size: 14px;
         font-weight: 700;
         vertical-alignment: center;
-        wrap: word-wrap;
+        overflow: elide;
+    }
+}
+
+component RemoteFieldLine inherits HorizontalLayout {
+    in property <string> host;
+    in property <int> port;
+    in property <int> test_state;
+    callback copy();
+    callback open();
+    spacing: 8px;
+
+    HorizontalLayout {
+        width: 52px;
+        height: 26px;
+        spacing: 2px;
+        Text {
+            text: "远端";
+            width: 30px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        InlineTestMark { state: root.test_state; }
+    }
+    Text {
+        text: (root.host == "" ? "未配置" : root.host) + ":" + root.port;
+        horizontal-stretch: 1;
+        color: root.host == "" ? #94a3b8 : #0f172a;
+        font-size: 14px;
+        font-weight: 700;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    IconButton {
+        icon: @image-url("../../resources/icons/copy.svg");
+        clicked => { root.copy(); }
+    }
+    IconButton {
+        icon: @image-url("../../resources/icons/external-link.svg");
+        clicked => { root.open(); }
     }
 }
 
 component ProxyCard inherits Rectangle {
     in property <ProxyRow> item;
+    in property <string> remote_host;
     callback edit(int);
     callback remove(int);
+    callback clone(int);
     callback toggle(int);
     callback test(int);
+    callback copy_remote(string, int);
+    callback open_remote(string, int, string);
     height: 182px;
     background: root.item.enabled ? #ffffff : #f8fafc;
     border-color: root.item.enabled ? #dbe3ee : #cbd5e1;
@@ -283,11 +396,25 @@ component ProxyCard inherits Rectangle {
             }
 
             Rectangle { horizontal-stretch: 1; }
-            InfoPill {
+            Rectangle {
                 width: 70px;
-                text: root.item.enabled ? "已启用" : "已停用";
-                bg: root.item.enabled ? #dcfce7 : #e2e8f0;
-                fg: root.item.enabled ? #166534 : #475569;
+                height: 28px;
+                background: transparent;
+
+                InfoPill {
+                    width: parent.width;
+                    text: root.item.enabled ? "已启用" : "已停用";
+                    bg: status_touch.has-hover
+                        ? (root.item.enabled ? #bbf7d0 : #cbd5e1)
+                        : (root.item.enabled ? #dcfce7 : #e2e8f0);
+                    fg: root.item.enabled ? #166534 : #475569;
+                }
+
+                status_touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => { root.toggle(root.item.index); }
+                }
             }
         }
 
@@ -295,10 +422,17 @@ component ProxyCard inherits Rectangle {
 
         VerticalLayout {
             spacing: 7px;
-            FieldLine { label: "本地"; value: root.item.local_ip + ":" + root.item.local_port; }
             FieldLine {
-                label: "远端";
-                value: (root.item.proxy_type == "HTTP" || root.item.proxy_type == "HTTPS") ? "使用 frps HTTP入口" : "0.0.0.0:" + root.item.remote_port;
+                label: "本地";
+                value: root.item.local_ip + ":" + root.item.local_port;
+                test_state: root.item.local_test_state;
+            }
+            RemoteFieldLine {
+                host: root.remote_host;
+                port: root.item.remote_port;
+                test_state: root.item.remote_test_state;
+                copy => { root.copy_remote(root.remote_host, root.item.remote_port); }
+                open => { root.open_remote(root.remote_host, root.item.remote_port, root.item.proxy_type); }
             }
         }
 
@@ -306,11 +440,10 @@ component ProxyCard inherits Rectangle {
             spacing: 8px;
             Rectangle { horizontal-stretch: 1; }
             SmallButton {
-                text: root.item.enabled ? "停用" : "启用";
-                danger: root.item.enabled;
-                icon: root.item.enabled ? @image-url("../../resources/icons/power-off.svg") : @image-url("../../resources/icons/power.svg");
-                width: 62px;
-                clicked => { root.toggle(root.item.index); }
+                text: "克隆";
+                icon: @image-url("../../resources/icons/copy.svg");
+                width: 58px;
+                clicked => { root.clone(root.item.index); }
             }
             SmallButton {
                 text: "测试";
@@ -438,6 +571,11 @@ component ProxyForm inherits Rectangle {
 export component ProxyPage inherits Rectangle {
     in property <[ProxyPair]> proxy_pairs;
     in property <int> proxy_count;
+    in property <string> frps_public_ip;
+    in-out property <bool> copy_feedback_visible: false;
+    property <bool> show_delete_confirm: false;
+    property <int> delete_proxy_index: 0;
+    property <string> delete_proxy_name: "";
     in-out property <bool> show_add_proxy;
     in-out property <int> add_proxy_type_index;
     in-out property <string> add_proxy_name;
@@ -457,10 +595,13 @@ export component ProxyPage inherits Rectangle {
     in-out property <int> edit_proxy_remote_test_state;
     callback add_proxy(int, string, string, string, string);
     callback edit_proxy(int, int, string, string, string, string);
+    callback clone_proxy(int);
     callback delete_proxy(int);
     callback toggle_proxy(int);
     callback test_proxy(int);
     callback test_proxy_input(int, string, string, string);
+    callback copy_remote_address(string, int);
+    callback open_remote_address(string, int, string);
 
     background: transparent;
 
@@ -532,6 +673,7 @@ export component ProxyPage inherits Rectangle {
                     ProxyCard {
                         width: 342px;
                         item: pair.left;
+                        remote_host: root.frps_public_ip;
                         edit(index) => {
                             root.edit_proxy_index = index;
                             root.edit_proxy_type_index = pair.left.type_index;
@@ -543,13 +685,24 @@ export component ProxyPage inherits Rectangle {
                             root.edit_proxy_remote_test_state = 0;
                             root.show_edit_proxy = true;
                         }
-                        remove(index) => { root.delete_proxy(index); }
+                        remove(index) => {
+                            root.delete_proxy_index = index;
+                            root.delete_proxy_name = pair.left.name;
+                            root.show_delete_confirm = true;
+                        }
+                        clone(index) => { root.clone_proxy(index); }
                         toggle(index) => { root.toggle_proxy(index); }
                         test(index) => { root.test_proxy(index); }
+                        copy_remote(host, port) => {
+                            root.copy_remote_address(host, port);
+                            if host != "" { root.copy_feedback_visible = true; }
+                        }
+                        open_remote(host, port, proxy_type) => { root.open_remote_address(host, port, proxy_type); }
                     }
                     if pair.has_right : ProxyCard {
                         width: 342px;
                         item: pair.right;
+                        remote_host: root.frps_public_ip;
                         edit(index) => {
                             root.edit_proxy_index = index;
                             root.edit_proxy_type_index = pair.right.type_index;
@@ -561,11 +714,147 @@ export component ProxyPage inherits Rectangle {
                             root.edit_proxy_remote_test_state = 0;
                             root.show_edit_proxy = true;
                         }
-                        remove(index) => { root.delete_proxy(index); }
+                        remove(index) => {
+                            root.delete_proxy_index = index;
+                            root.delete_proxy_name = pair.right.name;
+                            root.show_delete_confirm = true;
+                        }
+                        clone(index) => { root.clone_proxy(index); }
                         toggle(index) => { root.toggle_proxy(index); }
                         test(index) => { root.test_proxy(index); }
+                        copy_remote(host, port) => {
+                            root.copy_remote_address(host, port);
+                            if host != "" { root.copy_feedback_visible = true; }
+                        }
+                        open_remote(host, port, proxy_type) => { root.open_remote_address(host, port, proxy_type); }
                     }
                     if !pair.has_right : Rectangle { width: 342px; }
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 1600ms;
+        running: root.copy_feedback_visible;
+        triggered => { root.copy_feedback_visible = false; }
+    }
+
+    if root.copy_feedback_visible : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 20px;
+        width: 116px;
+        height: 38px;
+        background: #166534;
+        border-radius: 8px;
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 7px;
+            alignment: center;
+
+            Rectangle {
+                width: 18px;
+                height: parent.height;
+                background: transparent;
+
+                Image {
+                    x: 0px;
+                    y: (parent.height - self.height) / 2;
+                    width: 18px;
+                    height: 18px;
+                    source: @image-url("../../resources/icons/check.svg");
+                }
+            }
+            Text {
+                text: "已复制";
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 800;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    if root.show_delete_confirm : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #0f172a66;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.show_delete_confirm = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 380px;
+            height: 210px;
+            background: #ffffff;
+            border-color: #dbe3ee;
+            border-width: 1px;
+            border-radius: 8px;
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 16px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+
+                    Rectangle {
+                        width: 42px;
+                        height: 42px;
+                        background: #fee2e2;
+                        border-radius: 8px;
+
+                        Image {
+                            x: 11px;
+                            y: 11px;
+                            width: 20px;
+                            height: 20px;
+                            source: @image-url("../../resources/icons/trash.svg");
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text { text: "删除代理"; color: #0f172a; font-size: 20px; font-weight: 800; }
+                        Text { text: root.delete_proxy_name; color: #64748b; font-size: 13px; overflow: elide; }
+                    }
+                }
+
+                Text {
+                    text: "删除后无法恢复，确认删除这个代理吗？";
+                    color: #475569;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton {
+                        text: "取消";
+                        width: 104px;
+                        clicked => { root.show_delete_confirm = false; }
+                    }
+                    ActionButton {
+                        text: "确认删除";
+                        danger: true;
+                        width: 112px;
+                        clicked => {
+                            root.show_delete_confirm = false;
+                            root.delete_proxy(root.delete_proxy_index);
+                        }
+                    }
                 }
             }
         }
