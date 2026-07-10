@@ -177,10 +177,11 @@ build\Release\slint_cpp.dll
 推送到 `main` 分支后，GitHub Actions 会自动：
 
 1. 使用 GitHub Windows Runner 上已安装的 Visual Studio 编译 x64 Release。
-2. 打包 `frpc-gui.exe`、`slint_cpp.dll` 和 `README.md`。
-3. 上传 ZIP 到本次 Actions 的构建产物。
-4. 从 `src/app_version.h` 读取版本号。
-5. 如果对应的 `v<版本号>` Tag 不存在，自动创建 Tag 和 GitHub Release，并上传 ZIP。
+2. 从 Slint 官方 Release 获取构建所需的 `slint-compiler.exe`。
+3. 打包 `frpc-gui.exe`、`slint_cpp.dll` 和 `README.md`。
+4. 上传 ZIP 到本次 Actions 的构建产物。
+5. 从 `src/app_version.h` 读取版本号。
+6. 如果对应的 `v<版本号>` Tag 不存在，自动创建 Tag 和 GitHub Release，并上传 ZIP。
 
 发布新版本前只需要修改：
 

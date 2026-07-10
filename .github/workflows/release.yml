@@ -30,6 +30,26 @@ jobs:
           "tag=v$version" >> $env:GITHUB_OUTPUT
           "Version: $version" >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Install Slint compiler
+        shell: pwsh
+        run: |
+          $binDir = "third_party/slint/1.16.0/bin"
+          $compiler = Join-Path $binDir "slint-compiler.exe"
+          if (-not (Test-Path $compiler)) {
+            $archive = Join-Path $env:RUNNER_TEMP "slint-compiler-Windows-AMD64.tar.gz"
+            $url = "https://github.com/slint-ui/slint/releases/download/v1.16.0/slint-compiler-Windows-AMD64.tar.gz"
+            New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+            & curl.exe --fail --location --retry 3 --output $archive $url
+            if ($LASTEXITCODE -ne 0) {
+              throw "Cannot download Slint compiler"
+            }
+            & tar.exe -xzf $archive -C $binDir
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $compiler)) {
+              throw "Cannot extract Slint compiler"
+            }
+          }
+          & $compiler --version
+
       - name: Configure
         run: cmake -S . -B build -A x64
 
